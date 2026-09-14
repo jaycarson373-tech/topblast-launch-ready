@@ -1,68 +1,151 @@
-# TopBlast Launch: go-live checklist
+# TopBlast Launch: exact go-live runbook
 
-The web app is deployed at `https://topblast-stonkfun-launchpad.vercel.app`. Keep `LAUNCHES_ENABLED=false` until every health check passes.
+Production web URL: `https://topblast-stonkfun-launchpad.vercel.app`
+
+Railway project: `topblast-launch`
+
+Railway services already created:
+
+- `web`
+- `rewards-worker`
+
+Keep `LAUNCHES_ENABLED=false`, `DRY_RUN=true`, and `reward_engine_paused=true` until every check below passes.
 
 ## 1. Create Supabase and paste the schema
 
-1. Create a Supabase project.
-2. Open **SQL Editor**, choose **New query**, paste the complete contents of:
-   `supabase/migrations/202609130001_topblast_multilaunch.sql`
+1. Create a Supabase project in a North American region.
+2. Open **SQL Editor**, choose **New query**, and paste the entire contents of `supabase/migrations/202609130001_topblast_multilaunch.sql`.
 3. Click **Run** once.
-4. In **Project Settings > API**, copy the project URL and service-role key.
+4. Open **Project Settings > API**.
+5. Copy the project URL and the `service_role` key. The service-role key is server-only.
 
-The migration is idempotent only at the initial project level. Do not paste it twice into an already partially-created schema.
+Do not run the migration a second time against a partially-created schema.
 
-## 2. Add Vercel environment variables
+## 2. Wallet setup
 
-Open **Vercel > topblast-stonkfun-launchpad > Settings > Environment Variables**. Add these to Production:
+Use separate wallets:
+
+1. **Creator wallet**: browser wallet that signs the StonkFun launch payment. Fund this only with the SOL needed for the launch payment and fees.
+2. **TopBlast reward treasury**: public address stored as `TOPBLAST_TREASURY_ADDRESS`. It holds funded STONK rewards and a small amount of SOL for transaction fees.
+3. **Protocol treasury**: public address stored as `PROTOCOL_TREASURY_ADDRESS`.
+
+Do not paste a seed phrase, private key, or keypair JSON into Vercel, Railway, this repository, chat, or any `NEXT_PUBLIC_*` variable. The MVP uses `PAYOUT_MODE=manual_wallet`: Railway prepares and hashes the payout manifest, then an operator approves transfers with a wallet. A reviewed KMS or MPC signer can be connected later through `PAYOUT_SIGNER_PROVIDER`.
+
+Do not put 10 SOL in the reward treasury just for transaction fees. Start with a small operational amount after verifying the address. Keep the actual reward budget in STONK. The creator wallet separately needs whatever amount the signed StonkFun quote displays.
+
+## 3. Create the Helius webhook
+
+Create one **Enhanced Mainnet** webhook with:
 
 ```text
+URL=https://topblast-stonkfun-launchpad.vercel.app/api/indexer/helius
+Transaction types=ANY
+Initial monitored address=YOUR_TOPBLAST_TREASURY_ADDRESS
+Authorization header=Bearer YOUR_HELIUS_WEBHOOK_SECRET
+```
+
+Copy the resulting webhook ID. After each successful StonkFun launch, TopBlast automatically adds that mint and pool address to this webhook. If Helius cannot be updated, the market remains inactive and the admin panel records the tracker error.
+
+## 4. Paste these variables into Vercel
+
+Open **Vercel > topblast-stonkfun-launchpad > Settings > Environment Variables** and paste into Production:
+
+```text
+NEXT_PUBLIC_APP_URL=https://topblast-stonkfun-launchpad.vercel.app
 NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVER_ONLY_SERVICE_ROLE_KEY
 HELIUS_API_KEY=YOUR_HELIUS_KEY
-HELIUS_WEBHOOK_SECRET=GENERATE_A_LONG_RANDOM_SECRET
-TOPBLAST_TREASURY_ADDRESS=YOUR_REVIEWED_SOLANA_TREASURY
-PROTOCOL_TREASURY_ADDRESS=YOUR_REVIEWED_PROTOCOL_TREASURY
-ADMIN_API_TOKEN=GENERATE_A_DIFFERENT_LONG_RANDOM_SECRET
+HELIUS_WEBHOOK_ID=YOUR_HELIUS_WEBHOOK_ID
+HELIUS_WEBHOOK_SECRET=YOUR_LONG_RANDOM_WEBHOOK_SECRET
+SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_KEY
+TOPBLAST_TREASURY_ADDRESS=YOUR_REWARD_TREASURY_PUBLIC_ADDRESS
+PROTOCOL_TREASURY_ADDRESS=YOUR_PROTOCOL_TREASURY_PUBLIC_ADDRESS
+ADMIN_API_TOKEN=YOUR_DIFFERENT_LONG_RANDOM_ADMIN_SECRET
+STONKFUN_API_URL=https://www.stonkfun.xyz/api/public/v1
+STONK_QUOTE_MINT=6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx
+NEXT_PUBLIC_STONK_QUOTE_MINT=6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx
+TOPBLAST_MIN_REWARD_PERCENT=50
+REWARD_EPOCH_SECONDS=3600
+PAYOUT_MODE=manual_wallet
 DRY_RUN=true
-LAUNCHES_ENABLED=true
+LAUNCHES_ENABLED=false
 ```
 
-Never prefix the service-role key, Helius key, webhook secret, treasury signer, or admin token with `NEXT_PUBLIC_`.
+Redeploy after saving.
 
-## 3. Configure Helius
+## 5. Paste these variables into both Railway services
 
-Create an enhanced-transaction webhook targeting:
+Open the Railway `topblast-launch` project. For both `web` and `rewards-worker`, use **Variables > RAW Editor** and paste:
 
 ```text
-https://topblast-stonkfun-launchpad.vercel.app/api/indexer/helius
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVER_ONLY_SERVICE_ROLE_KEY
+HELIUS_API_KEY=YOUR_HELIUS_KEY
+HELIUS_WEBHOOK_ID=YOUR_HELIUS_WEBHOOK_ID
+HELIUS_WEBHOOK_SECRET=YOUR_LONG_RANDOM_WEBHOOK_SECRET
+SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_KEY
+TOPBLAST_TREASURY_ADDRESS=YOUR_REWARD_TREASURY_PUBLIC_ADDRESS
+PROTOCOL_TREASURY_ADDRESS=YOUR_PROTOCOL_TREASURY_PUBLIC_ADDRESS
+ADMIN_API_TOKEN=YOUR_DIFFERENT_LONG_RANDOM_ADMIN_SECRET
+STONKFUN_API_URL=https://www.stonkfun.xyz/api/public/v1
+STONK_QUOTE_MINT=6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx
+TOPBLAST_MIN_REWARD_PERCENT=50
+REWARD_EPOCH_SECONDS=3600
+REWARD_WORKER_POLL_SECONDS=30
+PAYOUT_MODE=manual_wallet
+DRY_RUN=true
+LAUNCHES_ENABLED=false
 ```
 
-Send the header:
+Service-specific variables are already configured:
 
 ```text
-Authorization: Bearer YOUR_HELIUS_WEBHOOK_SECRET
+web: SERVICE_MODE=web
+rewards-worker: SERVICE_MODE=worker
 ```
 
-Add every new launch mint and market address to the webhook after the launch reaches `active`. Validate one real LaunchLab buy, one sell, and one transfer before leaving launch mode enabled.
+Seal `SUPABASE_SERVICE_ROLE_KEY`, `HELIUS_API_KEY`, `HELIUS_WEBHOOK_SECRET`, and `ADMIN_API_TOKEN` in Railway after saving them.
 
-## 4. Redeploy and verify
+## 6. Verify before enabling launches
+
+Run:
 
 ```bash
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
 npx vercel --prod --yes
 pnpm verify:production
 ```
 
-`GET /api/health` must return HTTP 200 with `"ready": true`. If it returns 503, do not launch yet. The response names the missing configuration without exposing values.
-
-## 5. Railway
-
-The included `railway.toml` runs the Next.js service and checks `/api/health`. Connect the same GitHub repository, copy the same server-side variables, and set `NEXT_PUBLIC_APP_URL` to the Railway domain if Railway is the primary host.
-
-For a separate reward-worker service, override its start command:
+Confirm:
 
 ```text
-pnpm worker:rewards
+GET https://topblast-stonkfun-launchpad.vercel.app/api/live -> HTTP 200
+GET https://topblast-stonkfun-launchpad.vercel.app/api/health -> HTTP 503 while LAUNCHES_ENABLED=false
 ```
 
-Leave `DRY_RUN=true`. Live payouts intentionally remain blocked until a reviewed server-side signer or multisig approval provider is connected.
+Open `/admin`, enter `ADMIN_API_TOKEN`, and confirm the exact treasury public address and its RPC balance. Do a tiny test transfer before funding it further.
+
+## 7. Activate controlled launches
+
+Change `LAUNCHES_ENABLED=true` in Vercel and Railway web, then redeploy. `/api/health` must return HTTP 200 with `"ready": true`.
+
+Leave these unchanged:
+
+```text
+DRY_RUN=true
+PAYOUT_MODE=manual_wallet
+```
+
+Run one controlled launch. Verify its mint, pool, launch transaction, active tracked market, Helius delivery, and one recognized buy before opening the site publicly.
+
+## 8. Reward worker and payouts
+
+The Railway worker runs continuously, writes a heartbeat to `system_config`, survives restarts, isolates every query by `launch_id`, and remains monitoring-only while `reward_engine_paused=true`.
+
+After reviewing a dry-run epoch, use `/admin` to export a deterministic payout manifest. Verify its epoch, launch, reward mint, treasury, recipients, total, and SHA-256 hash before approving any wallet transaction.
+
+Do not set `DRY_RUN=false` yet. Live automated signing is intentionally unavailable until a reviewed KMS/MPC signer and the creator-fee deposit/routing flow are connected.

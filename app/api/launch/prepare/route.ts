@@ -3,6 +3,7 @@ import { createLaunchDraft } from "@/lib/db/launch-repository";
 import { StonkFunAdapter, StonkFunApiError } from "@/lib/venue/stonkfun-adapter";
 import { launchDraftSchema, validateMinimumReward } from "@/lib/validation";
 import { assertLaunchReady } from "@/lib/readiness";
+import { getTreasuryBalance } from "@/lib/solana/rpc";
 
 export const runtime = "nodejs";
 
@@ -13,6 +14,7 @@ export async function POST(request: Request) {
     validateMinimumReward(draft.allocation.topblastPercent);
     const expectedQuote = process.env.STONK_QUOTE_MINT ?? "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx";
     if (draft.quoteMint !== expectedQuote) return NextResponse.json({ error: "MVP launches must use the STONK pair" }, { status: 400 });
+    await getTreasuryBalance(process.env.TOPBLAST_TREASURY_ADDRESS!);
     const adapter = new StonkFunAdapter();
     const pair = await adapter.getPair(draft.quoteMint);
     if (!pair?.launchable || pair.launchLabReady === false) {

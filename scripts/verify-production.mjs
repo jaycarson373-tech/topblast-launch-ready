@@ -3,6 +3,7 @@ const checks = [
   ["homepage", "/", [200]],
   ["launch page", "/launch", [200]],
   ["explore page", "/explore", [200]],
+  ["liveness", "/api/live", [200]],
   ["health", "/api/health", [200, 503]],
 ];
 

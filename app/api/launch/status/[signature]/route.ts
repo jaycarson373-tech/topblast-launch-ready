@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { applyVenueLaunch } from "@/lib/db/launch-repository";
+import { applyVenueLaunch, verifyLaunchPayment } from "@/lib/db/launch-repository";
 import { StonkFunAdapter, StonkFunApiError } from "@/lib/venue/stonkfun-adapter";
 
 export const runtime = "nodejs";
@@ -9,6 +9,7 @@ export async function GET(request: Request, context: { params: Promise<{ signatu
     const { signature } = await context.params;
     const launchId = new URL(request.url).searchParams.get("launchId");
     if (!launchId) return NextResponse.json({ error: "launchId is required" }, { status: 400 });
+    await verifyLaunchPayment(launchId, signature);
     const result = await new StonkFunAdapter().getLaunch(signature);
     await applyVenueLaunch(launchId, result);
     return NextResponse.json({ launchId, ...result });

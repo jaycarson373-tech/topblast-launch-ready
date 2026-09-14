@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { getAdminDb } from "@/lib/db/server";
 import type { LaunchDraft, LaunchSummary } from "@/lib/types";
 import type { SubmittedLaunch, VenueLaunch } from "@/lib/venue/launch-venue-adapter";
+import { addHeliusWebhookAddresses } from "@/lib/indexer/helius-webhook";
 
 export async function createLaunchDraft(draft: LaunchDraft, signedQuote: string): Promise<string> {
   const db = getAdminDb();
@@ -56,11 +57,27 @@ export async function applyVenueLaunch(launchId: string, result: SubmittedLaunch
   if (completed) {
     const { data: launch, error: launchError } = await db.from("launches").select("quote_mint").eq("id", launchId).single();
     if (launchError) throw launchError;
+    let trackingActive = false;
+    let trackingError: string | null = null;
+    try {
+      await addHeliusWebhookAddresses([result.mint!, result.pool!]);
+      trackingActive = true;
+    } catch (error) {
+      trackingError = error instanceof Error ? error.message : "Helius webhook update failed";
+    }
     const { error: marketError } = await db.from("tracked_markets").upsert({
       launch_id: launchId, venue: "stonkfun", market_address: result.pool,
-      base_mint: result.mint, quote_mint: launch.quote_mint, active: true,
+      base_mint: result.mint, quote_mint: launch.quote_mint, active: trackingActive,
     }, { onConflict: "launch_id" });
     if (marketError) throw marketError;
+    if (trackingError) {
+      const { error: configError } = await db.from("system_config").upsert({
+        key: `tracker_sync_error:${launchId}`,
+        value: { message: trackingError, at: new Date().toISOString() },
+        updated_at: new Date().toISOString(),
+      });
+      if (configError) throw configError;
+    }
   }
 }
 
@@ -70,6 +87,13 @@ export async function verifyLaunchQuote(launchId: string, signedQuote: string): 
   if (error) throw error;
   if (data.signed_quote_hash !== hash) throw new Error("Signed quote does not match prepared launch");
   if (!["prepared", "processing"].includes(data.status)) throw new Error(`Launch is already ${data.status}`);
+}
+
+export async function verifyLaunchPayment(launchId: string, paymentSignature: string): Promise<void> {
+  const { data, error } = await getAdminDb().from("launches").select("payment_signature,status").eq("id", launchId).single();
+  if (error) throw error;
+  if (!data.payment_signature || data.payment_signature !== paymentSignature) throw new Error("Payment signature does not belong to this launch");
+  if (!["processing", "active"].includes(data.status)) throw new Error(`Launch is ${data.status}`);
 }
 
 export async function listLaunches(): Promise<LaunchSummary[]> {

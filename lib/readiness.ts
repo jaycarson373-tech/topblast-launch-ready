@@ -3,6 +3,7 @@ import { isDatabaseConfigured } from "@/lib/db/server";
 const requiredRuntimeVariables = [
   "SUPABASE_SERVICE_ROLE_KEY",
   "HELIUS_API_KEY",
+  "HELIUS_WEBHOOK_ID",
   "HELIUS_WEBHOOK_SECRET",
   "TOPBLAST_TREASURY_ADDRESS",
   "PROTOCOL_TREASURY_ADDRESS",
@@ -14,7 +15,7 @@ export function runtimeReadiness() {
   const launchesEnabled = process.env.LAUNCHES_ENABLED === "true";
   return {
     database: isDatabaseConfigured(),
-    indexer: Boolean(process.env.HELIUS_API_KEY && process.env.HELIUS_WEBHOOK_SECRET),
+    indexer: Boolean(process.env.HELIUS_API_KEY && process.env.HELIUS_WEBHOOK_ID && process.env.HELIUS_WEBHOOK_SECRET),
     treasury: Boolean(process.env.TOPBLAST_TREASURY_ADDRESS && process.env.PROTOCOL_TREASURY_ADDRESS),
     dryRun: process.env.DRY_RUN !== "false",
     launchesEnabled,
