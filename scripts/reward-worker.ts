@@ -5,9 +5,8 @@ import { StonkFunAdapter } from "../lib/venue/stonkfun-adapter";
 
 const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-if (!url || !key) throw new Error("SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) and SUPABASE_SERVICE_ROLE_KEY are required");
-
-const db = createClient(url, key, { auth: { persistSession: false } });
+const configured = Boolean(url && key);
+const db = url && key ? createClient(url, key, { auth: { persistSession: false } }) : null;
 const venue = new StonkFunAdapter();
 const dryRun = process.env.DRY_RUN !== "false";
 
@@ -15,7 +14,7 @@ const port = Number(process.env.PORT ?? 0);
 const healthServer = port > 0 ? createServer((request, response) => {
   if (request.url === "/api/live" || request.url === "/") {
     response.writeHead(200, { "Content-Type": "application/json" });
-    response.end(JSON.stringify({ live: true, service: "topblast-rewards-worker", dryRun }));
+    response.end(JSON.stringify({ live: true, service: "topblast-rewards-worker", configured, dryRun }));
     return;
   }
   response.writeHead(404).end();
@@ -26,6 +25,10 @@ process.on("SIGTERM", () => { stopping = true; healthServer?.close(); });
 process.on("SIGINT", () => { stopping = true; healthServer?.close(); });
 
 async function runCycle() {
+  if (!db) {
+    process.stdout.write(`${new Date().toISOString()} waiting for Supabase configuration; no work performed\n`);
+    return;
+  }
   const heartbeat = { at: new Date().toISOString(), mode: dryRun ? "dry_run" : "live", payoutMode: process.env.PAYOUT_MODE ?? "manual_wallet" };
   const { error: heartbeatError } = await db.from("system_config").upsert({ key: "worker_heartbeat", value: heartbeat, updated_at: heartbeat.at });
   if (heartbeatError) throw heartbeatError;
