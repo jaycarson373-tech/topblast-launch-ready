@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 import { createLaunchDraft } from "@/lib/db/launch-repository";
 import { StonkFunAdapter, StonkFunApiError } from "@/lib/venue/stonkfun-adapter";
 import { launchDraftSchema, validateMinimumReward } from "@/lib/validation";
+import { assertLaunchReady } from "@/lib/readiness";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
+    assertLaunchReady();
     const draft = launchDraftSchema.parse(await request.json());
     validateMinimumReward(draft.allocation.topblastPercent);
     const expectedQuote = process.env.STONK_QUOTE_MINT ?? "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx";

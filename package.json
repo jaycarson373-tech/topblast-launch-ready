@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "worker:rewards": "tsx scripts/reward-worker.ts"
+    "worker:rewards": "tsx scripts/reward-worker.ts",
+    "verify:production": "node scripts/verify-production.mjs"
   },
   "dependencies": {
     "@solana/addresses": "^5.3.0",

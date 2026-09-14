@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 
 const flow = [
   ["01", "TOKEN LAUNCH", "Creator signs once"],
@@ -15,6 +16,7 @@ export default function Home() {
         <div className="eyebrow">THE LAUNCHPAD LAYER FOR TOP BLASTERS</div>
         <div className="hero-grid">
           <div>
+            <Image className="hero-mark" src="/topblast-mark.png" alt="TopBlast" width={92} height={92} priority />
             <h1>LAUNCH WITH<br /><span>TOPBLAST.</span></h1>
             <p className="hero-copy">Launch on StonkFun with the TopBlast reward engine built in.</p>
             <div className="hero-actions">

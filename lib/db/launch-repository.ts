@@ -30,6 +30,7 @@ export async function createLaunchDraft(draft: LaunchDraft, signedQuote: string)
     creator_percent: draft.allocation.creatorPercent,
     protocol_percent: draft.allocation.protocolPercent,
     reward_asset_mint: draft.quoteMint,
+    treasury_address: process.env.TOPBLAST_TREASURY_ADDRESS,
     immutable: true,
   });
   if (configError) throw configError;

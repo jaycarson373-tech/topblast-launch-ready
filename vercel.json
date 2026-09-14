@@ -1,0 +1,9 @@
+{
+  "framework": "nextjs",
+  "functions": {
+    "app/api/launch/prepare/route.ts": { "maxDuration": 30 },
+    "app/api/launch/submit/route.ts": { "maxDuration": 60 },
+    "app/api/launch/status/[signature]/route.ts": { "maxDuration": 30 },
+    "app/api/indexer/helius/route.ts": { "maxDuration": 60 }
+  }
+}

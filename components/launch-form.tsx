@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getWallets } from "@wallet-standard/app";
 
 const STONK_MINT = process.env.NEXT_PUBLIC_STONK_QUOTE_MINT ?? "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx";
@@ -41,7 +41,15 @@ export function LaunchForm() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<Record<string, string> | null>(null);
+  const [runtime, setRuntime] = useState<{ ready: boolean; missing: string[] } | null>(null);
   const total = useMemo(() => allocation.topblastPercent + allocation.creatorPercent + allocation.protocolPercent, [allocation]);
+
+  useEffect(() => {
+    fetch("/api/health", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((body) => setRuntime({ ready: Boolean(body.ready), missing: body.missing ?? [] }))
+      .catch(() => setRuntime({ ready: false, missing: ["runtime health check"] }));
+  }, []);
 
   async function connect() {
     setError("");
@@ -103,6 +111,7 @@ export function LaunchForm() {
 
   return (
     <form className="panel" action={prepare}>
+      {runtime && !runtime.ready && <div className="error"><strong>Launch activation pending.</strong> The transaction button stays locked until infrastructure checks pass. Missing: {runtime.missing.length ? runtime.missing.join(", ") : "LAUNCHES_ENABLED=true"}.</div>}
       <div className="form-grid">
         <div className="field"><label htmlFor="name">Token name</label><input id="name" name="name" required maxLength={32} placeholder="Top Coin" /></div>
         <div className="field"><label htmlFor="symbol">Ticker</label><input id="symbol" name="symbol" required maxLength={10} placeholder="TOP" /></div>
@@ -145,7 +154,7 @@ export function LaunchForm() {
       {result && <div className="success"><strong>Launch complete.</strong><br />Mint: {result.mint}<br />Pool: {result.pool}<br />Signature: {result.signature}</div>}
       <div className="form-footer">
         <p className="notice">Non-custodial. Your wallet signs the exact StonkFun payment transaction. TopBlast never receives your private key.</p>
-        {!prepared && <button className="button" disabled={busy || total !== 100}>{busy ? "Preparing..." : wallet ? "Launch on STONK" : "Connect and launch"}</button>}
+        {!prepared && <button className="button" disabled={busy || total !== 100 || !runtime?.ready}>{busy ? "Preparing..." : !runtime?.ready ? "Activation pending" : wallet ? "Launch on STONK" : "Connect and launch"}</button>}
       </div>
       {wallet && <p className="notice">Connected: {walletName} · <span className="mono">{wallet.address}</span></p>}
     </form>
