@@ -1,4 +1,4 @@
-> Audit update, September 14: this runbook describes infrastructure setup, not a completed reward system. The current worker does not schedule/persist epochs or execute/reconcile payouts, and fee deposits are not connected. Do not advertise live rewards after merely adding environment variables. Apply both SQL migrations in order. `pnpm verify:production` now fails until launches AND rewards are ready; use `pnpm verify:production -- --smoke` for availability-only checks.
+> Release status, September 14: the operational launch, funding, indexing, epoch, payout, reconciliation, and proof pipeline is implemented and deployed. Production rewards remain intentionally disabled until the three SQL migrations and required server-side environment variables are installed and the controlled real-money acceptance cycle is completed. `pnpm verify:production` enforces that distinction; use `pnpm verify:production -- --smoke` only for availability checks.
 
 # TopBlast Launch: exact go-live runbook
 
