@@ -24,7 +24,8 @@ export async function addHeliusWebhookAddresses(addresses: string[]): Promise<vo
   const currentResponse = await fetch(endpoint, { cache: "no-store", signal: AbortSignal.timeout(12_000) });
   if (!currentResponse.ok) throw new Error(`Helius webhook lookup returned HTTP ${currentResponse.status}`);
   const current = await currentResponse.json() as HeliusWebhook;
-  const accountAddresses = [...new Set([...(current.accountAddresses ?? []), ...addresses])];
+  const treasury = process.env.TOPBLAST_TREASURY_ADDRESS?.trim();
+  const accountAddresses = [...new Set([...(current.accountAddresses ?? []), ...addresses, treasury].filter((address): address is string => Boolean(address)))];
   if (accountAddresses.length === current.accountAddresses?.length) return;
   const updateResponse = await fetch(endpoint, {
     method: "PUT",

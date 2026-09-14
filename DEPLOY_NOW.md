@@ -1,5 +1,7 @@
 > Release status, September 14: the operational launch, funding, indexing, epoch, payout, reconciliation, and proof pipeline is implemented and deployed. Production rewards remain intentionally disabled until the three SQL migrations and required server-side environment variables are installed and the controlled real-money acceptance cycle is completed. `pnpm verify:production` enforces that distinction; use `pnpm verify:production -- --smoke` only for availability checks.
 
+Current infrastructure update: the Helius API/RPC connection, production webhook, webhook secret, admin token, Vercel project, and both Railway services are configured. The generated operational secrets are sealed in the hosting providers and stored in the macOS Keychain under account `topblast-production`. Do not recreate or paste them. The only infrastructure inputs still required are a fresh Supabase project plus the reward and protocol treasury **public addresses**.
+
 # TopBlast Launch: exact go-live runbook
 
 Production web URL: `https://topblast-stonkfun-launchpad.vercel.app`
@@ -38,18 +40,15 @@ Do not paste a seed phrase, private key, or keypair JSON into Vercel, Railway, t
 
 Do not put 10 SOL in the reward treasury just for transaction fees. Start with a small operational amount after verifying the address. Keep the actual reward budget in STONK. The creator wallet separately needs whatever amount the signed StonkFun quote displays.
 
-## 3. Create the Helius webhook
+## 3. Helius webhook is already configured
 
-Create one **Enhanced Mainnet** webhook with:
+The Enhanced Mainnet webhook is active with ID:
 
 ```text
-URL=https://topblast-stonkfun-launchpad.vercel.app/api/indexer/helius
-Transaction types=ANY
-Initial monitored address=YOUR_TOPBLAST_TREASURY_ADDRESS
-Authorization header=Bearer YOUR_HELIUS_WEBHOOK_SECRET
+4d2a1cb0-b83c-4a90-871f-38770d19307b
 ```
 
-Copy the resulting webhook ID. After each successful StonkFun launch, TopBlast automatically adds that mint and pool address to this webhook. If Helius cannot be updated, the market remains inactive and the admin panel records the tracker error.
+It uses the production endpoint, `ANY` enhanced transactions, a sealed bearer secret, and an inert bootstrap address. After each successful StonkFun launch, TopBlast automatically adds that mint and pool address. Add the reward treasury public address after it is chosen. Do not create a second webhook unless this one is deliberately retired.
 
 ## 4. Paste these variables into Vercel
 
@@ -60,24 +59,13 @@ NEXT_PUBLIC_APP_URL=https://topblast-stonkfun-launchpad.vercel.app
 NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVER_ONLY_SERVICE_ROLE_KEY
-HELIUS_API_KEY=YOUR_HELIUS_KEY
-HELIUS_WEBHOOK_ID=YOUR_HELIUS_WEBHOOK_ID
-HELIUS_WEBHOOK_SECRET=YOUR_LONG_RANDOM_WEBHOOK_SECRET
-SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_KEY
 TOPBLAST_TREASURY_ADDRESS=YOUR_REWARD_TREASURY_PUBLIC_ADDRESS
 PROTOCOL_TREASURY_ADDRESS=YOUR_PROTOCOL_TREASURY_PUBLIC_ADDRESS
-ADMIN_API_TOKEN=YOUR_DIFFERENT_LONG_RANDOM_ADMIN_SECRET
-STONKFUN_API_URL=https://www.stonkfun.xyz/api/public/v1
-STONK_QUOTE_MINT=6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx
-NEXT_PUBLIC_STONK_QUOTE_MINT=6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx
-TOPBLAST_MIN_REWARD_PERCENT=50
-REWARD_EPOCH_SECONDS=3600
-PAYOUT_MODE=manual_wallet
-DRY_RUN=true
-LAUNCHES_ENABLED=false
 ```
 
 Redeploy after saving.
+
+`HELIUS_API_KEY`, `HELIUS_WEBHOOK_ID`, `HELIUS_WEBHOOK_SECRET`, `SOLANA_RPC_URL`, and `ADMIN_API_TOKEN` are already installed in Vercel. Leave them unchanged.
 
 ## 5. Paste these variables into both Railway services
 
@@ -86,25 +74,8 @@ Open the Railway `topblast-launch` project. For both `web` and `rewards-worker`,
 ```text
 SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVER_ONLY_SERVICE_ROLE_KEY
-HELIUS_API_KEY=YOUR_HELIUS_KEY
-HELIUS_WEBHOOK_ID=YOUR_HELIUS_WEBHOOK_ID
-HELIUS_WEBHOOK_SECRET=YOUR_LONG_RANDOM_WEBHOOK_SECRET
-SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_KEY
 TOPBLAST_TREASURY_ADDRESS=YOUR_REWARD_TREASURY_PUBLIC_ADDRESS
 PROTOCOL_TREASURY_ADDRESS=YOUR_PROTOCOL_TREASURY_PUBLIC_ADDRESS
-ADMIN_API_TOKEN=YOUR_DIFFERENT_LONG_RANDOM_ADMIN_SECRET
-STONKFUN_API_URL=https://www.stonkfun.xyz/api/public/v1
-STONK_QUOTE_MINT=6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx
-TOPBLAST_MIN_REWARD_PERCENT=50
-REWARD_EPOCH_SECONDS=3600
-REWARD_WORKER_POLL_SECONDS=30
-INDEX_BLOCK_BATCH_SIZE=100
-MAX_PRICE_AGE_SECONDS=180
-MAX_PRICE_GAP_SECONDS=180
-PAYOUT_BATCH_SIZE=4
-PAYOUT_MODE=manual_wallet
-DRY_RUN=true
-LAUNCHES_ENABLED=false
 ```
 
 Service-specific variables are already configured:
@@ -114,7 +85,7 @@ web: SERVICE_MODE=web
 rewards-worker: SERVICE_MODE=worker
 ```
 
-Seal `SUPABASE_SERVICE_ROLE_KEY`, `HELIUS_API_KEY`, `HELIUS_WEBHOOK_SECRET`, and `ADMIN_API_TOKEN` in Railway after saving them.
+The Helius, admin, worker-limit, StonkFun, dry-run, and launch-gate variables are already installed in both Railway services. Leave them unchanged. Seal the newly supplied `SUPABASE_SERVICE_ROLE_KEY` after saving it.
 
 ## 6. Verify before enabling launches
 
@@ -136,7 +107,13 @@ GET https://topblast-stonkfun-launchpad.vercel.app/api/live -> HTTP 200
 GET https://topblast-stonkfun-launchpad.vercel.app/api/health -> HTTP 503 while LAUNCHES_ENABLED=false
 ```
 
-Open `/admin`, enter `ADMIN_API_TOKEN`, and confirm the exact treasury public address and its RPC balance. Do a tiny test transfer before funding it further.
+Retrieve the already-installed admin token locally without putting it in chat:
+
+```bash
+security find-generic-password -a topblast-production -s topblast-admin-api-token -w
+```
+
+Open `/admin`, enter that token, and confirm the exact treasury public address and its RPC balance. Do a tiny test transfer before funding it further.
 
 ## 7. Activate controlled launches
 
