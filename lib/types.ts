@@ -96,4 +96,7 @@ export interface LaunchSummary {
   eligibleWallets: number;
   createdAt: string;
   status: LaunchStatus;
+  imageUrl?: string;
+  trackerStatus?: string;
+  totalFundedAtoms?: string;
 }

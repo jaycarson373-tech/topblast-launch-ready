@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { paymentSignatureFromTransaction } from "@/lib/solana/transaction-signature";
 import { getWallets } from "@wallet-standard/app";
 
 const STONK_MINT = process.env.NEXT_PUBLIC_STONK_QUOTE_MINT ?? "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx";
@@ -11,16 +12,23 @@ interface WalletLike {
   accounts: readonly WalletAccountLike[];
   features: Record<string, unknown>;
 }
+interface EventsFeature { on(event: "change", listener: (properties: { accounts?: readonly WalletAccountLike[] }) => void): () => void }
 interface ConnectFeature { connect(): Promise<{ accounts: readonly WalletAccountLike[] }> }
 interface SignTransactionFeature {
   signTransaction(input: { account: WalletAccountLike; transaction: Uint8Array; chain: string }): Promise<readonly { signedTransaction: Uint8Array }[]>;
 }
+const RECEIPT_KEY = "topblast-launch-receipt-v1";
+interface Receipt { launchId: string; paymentSignature: string }
 interface Prepared {
+  logo: string;
   launchId: string;
   signedQuote: string;
   paymentTransaction: string;
   payment: { lamports?: string | number; sol?: string | number; recipient?: string };
+  expiresAt?: string;
+  review: { name: string; symbol: string; allocation: typeof initialAllocation };
 }
+const initialAllocation = { topblastPercent: 70, creatorPercent: 20, protocolPercent: 10 };
 
 const toDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
   const reader = new FileReader();
@@ -33,10 +41,13 @@ const encodeBase64 = (value: Uint8Array) => btoa(String.fromCharCode(...value));
 
 export function LaunchForm() {
   const [wallet, setWallet] = useState<WalletAccountLike | null>(null);
+  const [wallets, setWallets] = useState<readonly WalletLike[]>([]);
+  const [selectedWallet, setSelectedWallet] = useState("");
   const [walletName, setWalletName] = useState("");
   const [walletObject, setWalletObject] = useState<WalletLike | null>(null);
-  const [allocation, setAllocation] = useState({ topblastPercent: 70, creatorPercent: 20, protocolPercent: 10 });
+  const [allocation, setAllocation] = useState(initialAllocation);
   const [prepared, setPrepared] = useState<Prepared | null>(null);
+  const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [logo, setLogo] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -45,16 +56,46 @@ export function LaunchForm() {
   const total = useMemo(() => allocation.topblastPercent + allocation.creatorPercent + allocation.protocolPercent, [allocation]);
 
   useEffect(() => {
+    try {
+      const saved = localStorage.getItem(RECEIPT_KEY);
+      if (saved) { const parsed = JSON.parse(saved); if (typeof parsed.launchId === "string" && typeof parsed.paymentSignature === "string") setReceipt(parsed); }
+    } catch { /* Storage may be unavailable; in-memory state still prevents resubmission. */ }
     fetch("/api/health", { cache: "no-store" })
       .then((response) => response.json())
       .then((body) => setRuntime({ ready: Boolean(body.ready), missing: body.missing ?? [] }))
       .catch(() => setRuntime({ ready: false, missing: ["runtime health check"] }));
   }, []);
 
+  useEffect(() => {
+    const registry = getWallets();
+    const refresh = () => { const items = registry.get() as readonly WalletLike[]; setWallets(items); setSelectedWallet((current) => current || items[0]?.name || ""); };
+    refresh();
+    return registry.on("register", refresh);
+  }, []);
+
+  useEffect(() => {
+    const events = walletObject?.features["standard:events"] as EventsFeature | undefined;
+    if (!events) return;
+    return events.on("change", ({ accounts }) => {
+      const next = accounts?.find((item) => item.chains.some((chain) => chain.startsWith("solana:"))) ?? null;
+      if (next?.address === wallet?.address) return;
+      setWallet(next);
+      if (prepared && !receipt) setPrepared(null);
+      setError(next ? "Wallet account changed. Prepare a fresh transaction review." : "Wallet disconnected. Reconnect before continuing.");
+    });
+  }, [walletObject, wallet?.address, prepared, receipt]);
+
+  useEffect(() => {
+    if (!receipt) return;
+    const timer = window.setInterval(() => { void checkStatus(true); }, 8_000);
+    return () => window.clearInterval(timer);
+  // checkStatus deliberately follows the current receipt value.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [receipt?.launchId, receipt?.paymentSignature]);
+
   async function connect() {
     setError("");
-    const available = getWallets().get() as readonly WalletLike[];
-    const candidate = available.find((item) => item.features["standard:connect"] && item.features["solana:signTransaction"]);
+    const candidate = wallets.find((item) => item.name === selectedWallet && item.features["standard:connect"] && item.features["solana:signTransaction"]);
     if (!candidate) throw new Error("Install a Wallet Standard Solana wallet to continue");
     const response = await (candidate.features["standard:connect"] as ConnectFeature).connect();
     const account = response.accounts.find((item) => item.chains.some((chain) => chain.startsWith("solana:"))) ?? response.accounts[0];
@@ -78,45 +119,60 @@ export function LaunchForm() {
       const response = await fetch("/api/launch/prepare", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Could not prepare launch");
-      setPrepared(body);
+      setPrepared({ ...body, logo, review: { name: String(payload.name), symbol: String(payload.symbol).toUpperCase(), allocation: { ...allocation } } });
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not prepare launch"); }
     finally { setBusy(false); }
   }
 
+  function complete(body: Record<string, string>) {
+    if (body.status !== "completed") throw new Error(body.status === "failed" ? "The venue reports a failed launch. Keep this receipt and verify the payment before starting again." : "The launch is still processing. Use Check launch status; do not pay again.");
+    setResult({ mint: String(body.mint), pool: String(body.pool), signature: String(body.signature ?? body.paymentSignature), trackerStatus: String(body.trackerStatus ?? "pending") });
+    setPrepared(null);
+    setReceipt(null);
+    try { localStorage.removeItem(RECEIPT_KEY); } catch { /* No signing depends on storage. */ }
+  }
+
+  async function checkStatus(quiet = false) {
+    if (!receipt) return;
+    if (!quiet) setBusy(true); setError("");
+    try {
+      const response = await fetch(`/api/launch/status/${encodeURIComponent(receipt.paymentSignature)}?launchId=${encodeURIComponent(receipt.launchId)}`, { cache: "no-store" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Could not verify payment status. Keep this receipt and do not pay again.");
+      complete(body);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Status check failed"); }
+    finally { if (!quiet) setBusy(false); }
+  }
+
   async function signAndSubmit() {
-    if (!prepared || !wallet || !walletObject) return;
+    if (!prepared || !wallet || !walletObject || receipt || busy) return;
     setBusy(true); setError("");
     try {
       const signer = walletObject.features["solana:signTransaction"] as SignTransactionFeature;
       const signed = await signer.signTransaction({ account: wallet, transaction: decodeBase64(prepared.paymentTransaction), chain: "solana:mainnet" });
       const signedTransaction = signed[0]?.signedTransaction;
       if (!signedTransaction) throw new Error("Wallet did not return a signed transaction");
-      const response = await fetch("/api/launch/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ launchId: prepared.launchId, signedQuote: prepared.signedQuote, signedTransaction: encodeBase64(signedTransaction), logo }) });
-      let body = await response.json();
-      if (!response.ok) throw new Error(body.error ?? "Launch submission failed");
-      if (body.status === "processing") {
-        for (let attempt = 0; attempt < 24 && body.status === "processing"; attempt += 1) {
-          await new Promise((resolve) => setTimeout(resolve, 5_000));
-          const status = await fetch(`/api/launch/status/${encodeURIComponent(body.paymentSignature)}?launchId=${prepared.launchId}`, { cache: "no-store" });
-          body = await status.json();
-          if (!status.ok) throw new Error(body.error ?? "Launch status failed");
-        }
-      }
-      if (body.status !== "completed") throw new Error("Launch is onchain and still processing. Do not submit another payment. Refresh status shortly.");
-      setResult({ mint: String(body.mint), pool: String(body.pool), signature: String(body.signature ?? body.paymentSignature) });
-      setPrepared(null);
+      const pending = { launchId: prepared.launchId, paymentSignature: paymentSignatureFromTransaction(signedTransaction) };
+      setReceipt(pending);
+      // Save only public identifiers, never signed transaction bytes or wallet secrets.
+      try { localStorage.setItem(RECEIPT_KEY, JSON.stringify(pending)); } catch { /* Show the receipt in the UI. */ }
+      const response = await fetch("/api/launch/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ launchId: prepared.launchId, signedQuote: prepared.signedQuote, signedTransaction: encodeBase64(signedTransaction), logo: prepared.logo }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Could not confirm launch submission. Check status before taking any further action.");
+      complete(body);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Launch failed"); }
     finally { setBusy(false); }
   }
 
   return (
-    <form className="panel" action={prepare}>
-      {runtime && !runtime.ready && <div className="error"><strong>Launch activation pending.</strong> The transaction button stays locked until infrastructure checks pass. Missing: {runtime.missing.length ? runtime.missing.join(", ") : "LAUNCHES_ENABLED=true"}.</div>}
+    <form className="panel" onSubmit={(event) => { event.preventDefault(); void prepare(new FormData(event.currentTarget)); }}>
+      {runtime && !runtime.ready && <div className="error"><strong>Launch activation pending.</strong> The transaction button stays locked until infrastructure checks pass. Launch services are not ready yet. No payment can be submitted here.</div>}
+      <fieldset disabled={busy || Boolean(prepared) || Boolean(receipt)}>
       <div className="form-grid">
         <div className="field"><label htmlFor="name">Token name</label><input id="name" name="name" required maxLength={32} placeholder="Top Coin" /></div>
         <div className="field"><label htmlFor="symbol">Ticker</label><input id="symbol" name="symbol" required maxLength={10} placeholder="TOP" /></div>
         <div className="field full"><label htmlFor="description">Description</label><textarea id="description" name="description" maxLength={500} placeholder="What this token is for." /></div>
-        <div className="field full"><label htmlFor="image">Image</label><input id="image" name="image" type="file" required accept="image/png,image/jpeg,image/webp" onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; if (file.size > 2_000_000) { setError("Image must be 2 MB or smaller"); return; } setLogo(await toDataUrl(file)); }} /></div>
+        <div className="field full"><label htmlFor="image">Image</label><input id="image" name="image" type="file" required accept="image/png,image/jpeg,image/webp" onChange={async (event) => { const file = event.target.files?.[0]; setLogo(""); if (!file) return; if (file.size > 2_000_000) { setError("Image must be 2 MB or smaller"); return; } setLogo(await toDataUrl(file)); }} /></div>
         <div className="field"><label htmlFor="twitter">X URL</label><input id="twitter" name="twitter" type="url" placeholder="https://x.com/..." /></div>
         <div className="field"><label htmlFor="website">Website URL</label><input id="website" name="website" type="url" placeholder="https://..." /></div>
         <div className="field"><label htmlFor="telegram">Telegram URL</label><input id="telegram" name="telegram" type="url" placeholder="https://t.me/..." /></div>
@@ -130,7 +186,7 @@ export function LaunchForm() {
       <div className="form-section">
         <div className="section-label">TopBlast rewards</div>
         <h3>Fund the blast zone.</h3>
-        <p className="notice">When eligible holders fall below their verified average entry, they share the funded TopBlast reward pool. Allocations apply only to creator-fee revenue made available to the platform.</p>
+        <p className="notice">When eligible holders fall below their verified average entry, they share the funded TopBlast reward pool. StonkFun sends creator fees to the creator wallet. You later deposit the declared gross amount through the creator dashboard, and the fixed allocation is enforced by that transaction.</p>
         <div className="allocation-grid">
           {(["topblastPercent", "creatorPercent", "protocolPercent"] as const).map((key) => (
             <label className="allocation" key={key}>
@@ -142,20 +198,24 @@ export function LaunchForm() {
         </div>
         <p className="notice">Total: {total}% {total === 100 ? "" : " Must equal 100%."}</p>
       </div>
-      {prepared && (
+      </fieldset>
+      {prepared && !receipt && (
         <div className="panel" style={{ background: "#fff5d7" }}>
           <div className="section-label">Transaction review</div>
-          <h3>Confirm StonkFun launch payment</h3>
-          <p className="notice">Cluster: Solana mainnet. Fee payer: {wallet?.address}. Amount: {prepared.payment.sol ?? prepared.payment.lamports ?? "See wallet"} {prepared.payment.sol ? "SOL" : "lamports"}. Recipient: {prepared.payment.recipient ?? "Shown by your wallet"}.</p>
-          <button type="button" className="button" disabled={busy} onClick={signAndSubmit}>Confirm in wallet</button>
+          <h3>{prepared.review.name} · ${prepared.review.symbol}</h3>
+          <p className="notice">Pair: {prepared.review.symbol} / STONK. Allocation: {prepared.review.allocation.topblastPercent}% rewards, {prepared.review.allocation.creatorPercent}% creator retained, {prepared.review.allocation.protocolPercent}% protocol.</p>
+          <p className="notice">Network: Solana mainnet. Fee payer: <span className="mono">{wallet?.address}</span>. Payment: {prepared.payment.sol ?? prepared.payment.lamports ?? "See wallet"} {prepared.payment.sol ? "SOL" : "lamports"}. Recipient: <span className="mono">{prepared.payment.recipient ?? "Shown by your wallet"}</span>. Quote expires: {prepared.expiresAt ? new Date(prepared.expiresAt).toLocaleTimeString() : "about 90 seconds after preparation"}.</p>
+          <button type="button" className="button" disabled={busy} onClick={signAndSubmit}>Confirm in wallet</button> <button type="button" className="button button-secondary" disabled={busy} onClick={() => setPrepared(null)}>Edit details</button>
         </div>
       )}
+      {receipt && <div className="panel" style={{ marginTop: 20 }} role="status"><h3>Payment verification pending</h3><p className="notice">Keep this receipt. Check status to recover after a delay or refresh. Do not make another payment.</p><p className="mono">Launch: {receipt.launchId}<br />Payment: {receipt.paymentSignature}</p><button type="button" className="button" disabled={busy} onClick={() => void checkStatus()}>Check launch status</button></div>}
       {error && <div className="error">{error}</div>}
-      {result && <div className="success"><strong>Launch complete.</strong><br />Mint: {result.mint}<br />Pool: {result.pool}<br />Signature: {result.signature}</div>}
+      {result && <div className={result.trackerStatus === "active" ? "success" : "error"}><strong>{result.trackerStatus === "active" ? "Launch complete. TopBlast tracking active." : "Token launched. Tracker registration needs recovery."}</strong><br />Mint: {result.mint}<br />Pool: {result.pool}<br />Signature: {result.signature}{result.trackerStatus !== "active" && <><br />Use the saved payment status recovery to retry tracking. No second payment is required.</>}</div>}
       <div className="form-footer">
         <p className="notice">Non-custodial. Your wallet signs the exact StonkFun payment transaction. TopBlast never receives your private key.</p>
-        {!prepared && <button className="button" disabled={busy || total !== 100 || !runtime?.ready}>{busy ? "Preparing..." : !runtime?.ready ? "Activation pending" : wallet ? "Launch on STONK" : "Connect and launch"}</button>}
+        {!prepared && !receipt && !result && <button className="button" disabled={busy || total !== 100 || !runtime?.ready}>{busy ? "Preparing..." : !runtime?.ready ? "Activation pending" : wallet ? "Launch on STONK" : "Connect and launch"}</button>}
       </div>
+      {!wallet && <div className="wallet-picker"><select aria-label="Wallet" value={selectedWallet} onChange={(event) => setSelectedWallet(event.target.value)}>{wallets.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select><button className="button button-secondary" type="button" onClick={() => void connect().catch((caught) => setError(caught instanceof Error ? caught.message : "Wallet connection failed"))}>Connect wallet</button></div>}
       {wallet && <p className="notice">Connected: {walletName} · <span className="mono">{wallet.address}</span></p>}
     </form>
   );

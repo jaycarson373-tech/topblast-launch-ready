@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     }
     const prepared = await adapter.createLaunch(draft);
     if (!prepared.signedQuote || !prepared.paymentTransaction) throw new Error("StonkFun returned an incomplete launch quote");
-    const launchId = await createLaunchDraft(draft, prepared.signedQuote);
+    const launchId = await createLaunchDraft(draft, prepared.signedQuote, prepared.paymentTransaction, prepared.expiresAt);
     return NextResponse.json({ launchId, ...prepared });
   } catch (error) {
     if (error instanceof StonkFunApiError) {

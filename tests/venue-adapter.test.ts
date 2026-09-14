@@ -20,3 +20,14 @@ describe("StonkFunAdapter", () => {
     await expect(new StonkFunAdapter("https://example.test").getLaunch("sig")).rejects.toMatchObject({ code: "service_unavailable", retryable: true });
   });
 });
+
+describe("launch outcome integrity", () => {
+  it("does not convert a failed launch into completed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: { status: "failed", paymentSignature: "sig" } }))));
+    expect((await new StonkFunAdapter().getLaunch("sig")).status).toBe("failed");
+  });
+  it.each([{}, { status: "unexpected" }, { status: "completed", mint: "mint" }])("rejects incomplete or unknown success responses: %j", async (data) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ data }))));
+    await expect(new StonkFunAdapter().getLaunch("sig")).rejects.toMatchObject({ code: "invalid_response" });
+  });
+});

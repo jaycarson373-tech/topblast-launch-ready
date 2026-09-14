@@ -1,3 +1,5 @@
+> Audit update, September 14: this runbook describes infrastructure setup, not a completed reward system. The current worker does not schedule/persist epochs or execute/reconcile payouts, and fee deposits are not connected. Do not advertise live rewards after merely adding environment variables. Apply both SQL migrations in order. `pnpm verify:production` now fails until launches AND rewards are ready; use `pnpm verify:production -- --smoke` for availability-only checks.
+
 # TopBlast Launch: exact go-live runbook
 
 Production web URL: `https://topblast-stonkfun-launchpad.vercel.app`
@@ -14,8 +16,11 @@ Keep `LAUNCHES_ENABLED=false`, `DRY_RUN=true`, and `reward_engine_paused=true` u
 ## 1. Create Supabase and paste the schema
 
 1. Create a Supabase project in a North American region.
-2. Open **SQL Editor**, choose **New query**, and paste the entire contents of `supabase/migrations/202609130001_topblast_multilaunch.sql`.
-3. Click **Run** once.
+2. Open **SQL Editor**, choose **New query**, and run these files once, in order:
+   - `supabase/migrations/202609130001_topblast_multilaunch.sql`
+   - `supabase/migrations/202609140001_audit_hardening.sql`
+   - `supabase/migrations/202609140002_operational_pipeline.sql`
+3. Confirm `launch_submission_receipts`, `chain_event_inbox`, `funding_intents`, `launch_funding_balances`, `price_observations`, `worker_leases`, and `payout_batches` exist.
 4. Open **Project Settings > API**.
 5. Copy the project URL and the `service_role` key. The service-role key is server-only.
 
@@ -29,7 +34,7 @@ Use separate wallets:
 2. **TopBlast reward treasury**: public address stored as `TOPBLAST_TREASURY_ADDRESS`. It holds funded STONK rewards and a small amount of SOL for transaction fees.
 3. **Protocol treasury**: public address stored as `PROTOCOL_TREASURY_ADDRESS`.
 
-Do not paste a seed phrase, private key, or keypair JSON into Vercel, Railway, this repository, chat, or any `NEXT_PUBLIC_*` variable. The MVP uses `PAYOUT_MODE=manual_wallet`: Railway prepares and hashes the payout manifest, then an operator approves transfers with a wallet. A reviewed KMS or MPC signer can be connected later through `PAYOUT_SIGNER_PROVIDER`.
+Do not paste a seed phrase, private key, or keypair JSON into Vercel, Railway, this repository, chat, or any `NEXT_PUBLIC_*` variable. The MVP uses `PAYOUT_MODE=manual_wallet`: Railway prepares and hashes the payout manifest, then an operator approves the exact transaction with a browser wallet.
 
 Do not put 10 SOL in the reward treasury just for transaction fees. Start with a small operational amount after verifying the address. Keep the actual reward budget in STONK. The creator wallet separately needs whatever amount the signed StonkFun quote displays.
 
@@ -93,6 +98,10 @@ STONK_QUOTE_MINT=6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx
 TOPBLAST_MIN_REWARD_PERCENT=50
 REWARD_EPOCH_SECONDS=3600
 REWARD_WORKER_POLL_SECONDS=30
+INDEX_BLOCK_BATCH_SIZE=100
+MAX_PRICE_AGE_SECONDS=180
+MAX_PRICE_GAP_SECONDS=180
+PAYOUT_BATCH_SIZE=4
 PAYOUT_MODE=manual_wallet
 DRY_RUN=true
 LAUNCHES_ENABLED=false
@@ -144,8 +153,16 @@ Run one controlled launch. Verify its mint, pool, launch transaction, active tra
 
 ## 8. Reward worker and payouts
 
-The Railway worker runs continuously, writes a heartbeat to `system_config`, survives restarts, isolates every query by `launch_id`, and remains monitoring-only while `reward_engine_paused=true`.
+The Railway worker runs continuously, writes a heartbeat to `system_config`, replays finalized blocks from each launch slot, validates LaunchLab swap accounts and exact SPL movements, records conservative prices, reconciles deposits and payouts, survives restarts, and isolates every query by `launch_id`. It continues indexing while `reward_engine_paused=true`, but creates no new epochs.
 
-After reviewing a dry-run epoch, use `/admin` to export a deterministic payout manifest. Verify its epoch, launch, reward mint, treasury, recipients, total, and SHA-256 hash before approving any wallet transaction.
+After reviewing a dry-run epoch, use `/admin` to prepare the exact payout transaction. Verify its epoch, launch, reward mint, treasury, recipients, total, and SHA-256 manifest hash before approving it with the treasury browser wallet. Signed bytes are persisted before broadcast and finalized bytes are reconciled before any row becomes paid.
 
-Do not set `DRY_RUN=false` yet. Live automated signing is intentionally unavailable until a reviewed KMS/MPC signer and the creator-fee deposit/routing flow are connected.
+For the controlled real-money acceptance only, set `DRY_RUN=false` after reviewing the addresses and tiny amounts. Explicit creator funding and each payout still require a browser-wallet signature. The application has no private-key environment variable and does not perform unattended signing.
+
+Run the acceptance cycle with deliberately tiny amounts:
+
+```text
+launch -> finalized market registration -> verified buy -> creator deposit -> finalized price coverage -> epoch allocation -> treasury-wallet payout -> finalized public proof -> worker restart -> no duplicate
+```
+
+Do not present production rewards as proven until the completed payout signature is visible on `/token/[mint]/proof` and remains singular after restarting the Railway worker.

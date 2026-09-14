@@ -3,12 +3,13 @@ import type { LaunchDraft } from "@/lib/types";
 export interface PreparedLaunch {
   signedQuote: string;
   paymentTransaction: string;
-  payment: { lamports: string | number; sol?: string | number };
+  payment: { lamports: string | number; sol?: string | number; recipient?: string };
+  expiresAt?: string;
   raw: Record<string, unknown>;
 }
 
 export interface SubmittedLaunch {
-  status: "processing" | "completed";
+  status: "processing" | "completed" | "failed";
   paymentSignature: string;
   mint?: string;
   pool?: string;
@@ -40,6 +41,7 @@ export interface CreatorFees {
   scope?: string;
   raw: Record<string, unknown>;
 }
+export interface VenueMarketData { priceUsd: number | null; marketCapUsd: number | null; volume24hUsd: number | null; liquidityUsd: number | null; raw: Record<string, unknown> }
 
 export interface PreparedFeeClaim {
   intentId: string;
@@ -55,6 +57,7 @@ export interface LaunchVenueAdapter {
   getLaunch(paymentSignature: string): Promise<VenueLaunch>;
   getPair(mint: string): Promise<VenuePair | null>;
   getCreatorFees(mint: string): Promise<CreatorFees>;
+  getMarketData(mint: string, expectedPool: string): Promise<VenueMarketData>;
   prepareCreatorFeeClaim(mint: string, creatorWallet: string): Promise<PreparedFeeClaim>;
   claimCreatorFees(input: {
     mint: string;

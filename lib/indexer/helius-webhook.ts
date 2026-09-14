@@ -1,5 +1,3 @@
-import "server-only";
-
 interface HeliusWebhook {
   webhookID: string;
   webhookURL: string;
@@ -44,4 +42,3 @@ export async function addHeliusWebhookAddresses(addresses: string[]): Promise<vo
   });
   if (!updateResponse.ok) throw new Error(`Helius webhook update returned HTTP ${updateResponse.status}`);
 }
-

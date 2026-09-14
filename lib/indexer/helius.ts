@@ -15,16 +15,23 @@ export interface HeliusEnhancedTransaction {
   type?: string;
   source?: string;
   feePayer?: string;
+  transactionError?: unknown;
   tokenTransfers?: HeliusTokenTransfer[];
   accountData?: Array<{ account?: string }>;
   instructions?: Array<{ accounts?: string[]; innerInstructions?: Array<{ accounts?: string[] }> }>;
 }
 
 const allowedSwapSources = new Set(["RAYDIUM", "RAYDIUM_LAUNCHLAB", "RAYDIUM_CP"]);
-const toRaw = (transfer: HeliusTokenTransfer): bigint => {
+const toRaw = (transfer: HeliusTokenTransfer, decimals: number): bigint => {
   if (transfer.rawTokenAmount?.tokenAmount) return BigInt(transfer.rawTokenAmount.tokenAmount);
-  const decimals = transfer.rawTokenAmount?.decimals ?? 0;
-  return BigInt(Math.round((transfer.tokenAmount ?? 0) * 10 ** decimals));
+  // Enhanced transfers normally contain UI tokenAmount, not rawTokenAmount.
+  // Use this market's mint decimals; defaulting to zero corrupts cost basis.
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) throw new Error("Invalid mint decimals");
+  const amount = transfer.tokenAmount;
+  if (amount === undefined || !Number.isFinite(amount) || amount < 0) throw new Error("Invalid token amount");
+  const scaled = Math.round(amount * 10 ** decimals);
+  if (!Number.isSafeInteger(scaled)) throw new Error("Exact raw token amount required for this transfer");
+  return BigInt(scaled);
 };
 
 function mentionsMarket(transaction: HeliusEnhancedTransaction, marketAddress: string): boolean {
@@ -38,7 +45,7 @@ export function parseHeliusActivity(
   transaction: HeliusEnhancedTransaction,
   market: TrackedMarket,
 ): { signature: string; events: PositionEvent[] } | null {
-  if (!transaction.signature || transaction.slot === undefined) return null;
+  if (!transaction.signature || transaction.slot === undefined || transaction.transactionError) return null;
   const transfers = transaction.tokenTransfers ?? [];
   const slot = BigInt(transaction.slot);
   const events: PositionEvent[] = [];
@@ -50,16 +57,16 @@ export function parseHeliusActivity(
       const baseIn = transfers.find((t) => t.mint === market.baseMint && t.toUserAccount === wallet);
       const quoteOut = transfers.find((t) => t.mint === market.quoteMint && t.fromUserAccount === wallet);
       if (baseIn && quoteOut) {
-        events.push({ kind: "verified_buy", launchId: market.launchId, wallet, tokenRaw: toRaw(baseIn), quoteAtoms: toRaw(quoteOut), slot });
+        events.push({ kind: "verified_buy", launchId: market.launchId, wallet, tokenRaw: toRaw(baseIn, market.tokenDecimals), quoteAtoms: toRaw(quoteOut, market.quoteDecimals), slot });
         continue;
       }
       const baseOut = transfers.find((t) => t.mint === market.baseMint && t.fromUserAccount === wallet);
       const quoteIn = transfers.find((t) => t.mint === market.quoteMint && t.toUserAccount === wallet);
-      if (baseOut && quoteIn) events.push({ kind: "sell", launchId: market.launchId, wallet, tokenRaw: toRaw(baseOut), slot });
+      if (baseOut && quoteIn) events.push({ kind: "sell", launchId: market.launchId, wallet, tokenRaw: toRaw(baseOut, market.tokenDecimals), slot });
     }
   } else {
     for (const transfer of transfers.filter((item) => item.mint === market.baseMint)) {
-      const tokenRaw = toRaw(transfer);
+      const tokenRaw = toRaw(transfer, market.tokenDecimals);
       if (tokenRaw <= 0n) continue;
       if (transfer.fromUserAccount) events.push({ kind: "outgoing_transfer", launchId: market.launchId, wallet: transfer.fromUserAccount, tokenRaw, slot });
       if (transfer.toUserAccount) events.push({ kind: "incoming_transfer", launchId: market.launchId, wallet: transfer.toUserAccount, tokenRaw, slot });

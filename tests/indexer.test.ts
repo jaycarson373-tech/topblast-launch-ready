@@ -22,3 +22,19 @@ describe("Helius activity parser", () => {
     expect(result?.events.map((event) => event.kind)).toEqual(["outgoing_transfer", "incoming_transfer"]);
   });
 });
+
+describe("real enhanced transfer payloads", () => {
+  it("scales UI transfer amounts by the tracked mint decimals", () => {
+    const result = parseHeliusActivity({ signature: "sig", slot: 1, type: "SWAP", source: "RAYDIUM_LAUNCHLAB", accountData: [{ account: "POOL" }], tokenTransfers: [
+      { mint: "QUOTE", fromUserAccount: "buyer", toUserAccount: "pool", tokenAmount: 1.25 },
+      { mint: "BASE", fromUserAccount: "pool", toUserAccount: "buyer", tokenAmount: 200 },
+    ] }, { ...market, quoteDecimals: 9 });
+    expect(result?.events[0]).toMatchObject({ kind: "verified_buy", tokenRaw: 200_000_000n, quoteAtoms: 1_250_000_000n });
+  });
+  it("ignores failed onchain transactions", () => {
+    expect(parseHeliusActivity({ signature: "sig", slot: 1, transactionError: "failed", tokenTransfers: [{ mint: "BASE", toUserAccount: "buyer", tokenAmount: 1 }] }, market)).toBeNull();
+  });
+  it("refuses imprecise amounts rather than inventing raw balances", () => {
+    expect(() => parseHeliusActivity({ signature: "sig", slot: 1, tokenTransfers: [{ mint: "BASE", toUserAccount: "buyer", tokenAmount: 1e20 }] }, market)).toThrow("Exact raw token amount");
+  });
+});

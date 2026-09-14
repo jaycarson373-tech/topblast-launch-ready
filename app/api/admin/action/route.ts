@@ -1,34 +1,48 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/db/server";
-import { getTreasuryBalance } from "@/lib/solana/rpc";
+import { getTreasuryBalance, solanaRpc } from "@/lib/solana/rpc";
 
 function authorized(request: Request) {
   const expected = process.env.ADMIN_API_TOKEN;
   const actual = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-  return Boolean(expected && actual && expected.length === actual.length && timingSafeEqual(Buffer.from(expected), Buffer.from(actual)));
+  return Boolean(expected && actual && Buffer.byteLength(expected) === Buffer.byteLength(actual) && timingSafeEqual(Buffer.from(expected), Buffer.from(actual)));
 }
 
 export async function GET(request: Request) {
   if (!authorized(request)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getAdminDb();
-  const [launches, markets, failedEpochs, failedPayouts, fees, config] = await Promise.all([
+  const [launches, markets, failedEpochs, failedPayouts, fees, config, balances, inboxFailures, approvals] = await Promise.all([
     db.from("launches").select("id", { count: "exact", head: true }).eq("status", "active"),
-    db.from("tracked_markets").select("last_indexed_slot,updated_at").eq("active", true).order("updated_at", { ascending: false }).limit(1).maybeSingle(),
+    db.from("tracked_markets").select("launch_id,last_indexed_slot,updated_at,tracker_error,history_complete,price_status").eq("active", true).order("last_indexed_slot"),
     db.from("reward_epochs").select("id", { count: "exact", head: true }).eq("status", "failed"),
-    db.from("reward_distributions").select("id", { count: "exact", head: true }).eq("status", "failed"),
+    db.from("payout_batches").select("id", { count: "exact", head: true }).in("status", ["failed", "uncertain"]),
     db.from("fee_events").select("amount_atoms").in("status", ["detected", "confirmed"]),
     db.from("system_config").select("key,value"),
+    db.from("launch_funding_balances").select("available_atoms,reserved_atoms,submitted_atoms,paid_atoms"),
+    db.from("chain_event_inbox").select("id", { count: "exact", head: true }).eq("status", "failed"),
+    db.from("payout_batches").select("id,launch_id,epoch_id,sequence,amount_atoms,status,manifest_hash").in("status", ["planned", "prepared", "submitted", "uncertain"]).order("created_at"),
   ]);
   const unclaimed = (fees.data ?? []).reduce((sum, item) => sum + BigInt(item.amount_atoms), 0n);
   const treasuryAddress = process.env.TOPBLAST_TREASURY_ADDRESS;
   const rewardMint = process.env.STONK_QUOTE_MINT;
   let treasuryBalances: unknown = "NOT CONFIGURED";
+  let finalizedSlot: number | null = null;
   if (treasuryAddress) {
     try { treasuryBalances = await getTreasuryBalance(treasuryAddress, rewardMint); }
     catch (error) { treasuryBalances = { address: treasuryAddress, error: error instanceof Error ? error.message : "RPC check failed" }; }
   }
-  return NextResponse.json({ activeLaunches: launches.count ?? 0, trackerHealth: markets.data ? "ONLINE" : "NO MARKETS", lastIndexedBlock: markets.data?.last_indexed_slot ?? null, failedEpochs: failedEpochs.count ?? 0, failedPayouts: failedPayouts.count ?? 0, unclaimedFeesAtoms: unclaimed.toString(), treasuryBalances, payoutMode: process.env.PAYOUT_MODE ?? "manual_wallet", dryRun: process.env.DRY_RUN !== "false", config: config.data ?? [] });
+  try { finalizedSlot = await solanaRpc<number>("getSlot", [{ commitment: "finalized" }]); } catch { /* reported as unavailable */ }
+  const rows = markets.data ?? [];
+  const lastIndexed = rows.length ? Math.min(...rows.map((item) => Number(item.last_indexed_slot))) : null;
+  const fundingTotals = (balances.data ?? []).reduce((sum, item) => ({
+    available: sum.available + BigInt(item.available_atoms), reserved: sum.reserved + BigInt(item.reserved_atoms),
+    submitted: sum.submitted + BigInt(item.submitted_atoms), paid: sum.paid + BigInt(item.paid_atoms),
+  }), { available: 0n, reserved: 0n, submitted: 0n, paid: 0n });
+  const heartbeat = config.data?.find((item) => item.key === "worker_heartbeat")?.value as { at?: string } | undefined;
+  const workerFresh = Boolean(heartbeat?.at && Date.now() - new Date(heartbeat.at).getTime() < 180_000);
+  const trackerHealth = !rows.length ? "NO MARKETS" : rows.some((item) => item.tracker_error || item.price_status === "failed") ? "DEGRADED" : rows.every((item) => item.history_complete) ? "CAUGHT UP" : "BACKFILLING";
+  return NextResponse.json({ activeLaunches: launches.count ?? 0, trackerHealth, workerFresh, workerHeartbeat: heartbeat ?? null, lastIndexedBlock: lastIndexed, finalizedSlot, indexingLag: finalizedSlot !== null && lastIndexed !== null ? finalizedSlot - lastIndexed : null, failedEpochs: failedEpochs.count ?? 0, failedPayouts: failedPayouts.count ?? 0, reconciliationProblems: inboxFailures.count ?? 0, observedCreatorFeesAtoms: unclaimed.toString(), fundingBalances: Object.fromEntries(Object.entries(fundingTotals).map(([name, value]) => [name, value.toString()])), treasuryBalances, payoutMode: "wallet_approved", dryRun: process.env.DRY_RUN !== "false", pendingApprovalBatches: approvals.data ?? [], config: config.data ?? [] });
 }
 
 export async function POST(request: Request) {

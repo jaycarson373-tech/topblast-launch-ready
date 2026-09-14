@@ -1,0 +1,76 @@
+import { getAdminDb } from "@/lib/db/server";
+import {
+  broadcastSignedCheckedTransfer,
+  inspectSignedCheckedTransfer,
+  prepareCheckedTransfer,
+  verifyFinalizedSignedTransaction,
+} from "@/lib/solana/checked-transfers";
+import { solanaRpc } from "@/lib/solana/rpc";
+
+export async function preparePayoutBatch(batchId: string) {
+  const db = getAdminDb();
+  const { data: batch, error } = await db.from("payout_batches").select("*").eq("id", batchId).single();
+  if (error) throw error;
+  if (batch.status === "prepared") return batch;
+  if (batch.status !== "planned") throw new Error(`Payout batch is ${batch.status}`);
+  const treasury = process.env.TOPBLAST_TREASURY_ADDRESS;
+  if (!treasury) throw new Error("TOPBLAST_TREASURY_ADDRESS is required");
+  const manifest = batch.manifest as Array<{ wallet: string; amountAtoms: string }>;
+  if (!Array.isArray(manifest) || !manifest.length) throw new Error("Payout manifest is empty");
+  const total = manifest.reduce((sum, item) => sum + BigInt(item.amountAtoms), 0n);
+  if (total !== BigInt(batch.amount_atoms)) throw new Error("Payout manifest does not match reserved batch amount");
+  const prepared = await prepareCheckedTransfer({
+    payer: treasury, mint: batch.asset_mint,
+    transfers: manifest.map((item) => ({ recipient: item.wallet, amountAtoms: BigInt(item.amountAtoms) })),
+    memo: `TOPBLAST:PAYOUT:${batch.launch_id}:${batch.epoch_id}:${batch.id}`,
+  });
+  const { data, error: updateError } = await db.from("payout_batches").update({
+    status: "prepared", unsigned_transaction: prepared.unsignedTransaction, unsigned_message_hash: prepared.messageHash,
+    last_valid_block_height: prepared.lastValidBlockHeight, prepared_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  }).eq("id", batchId).eq("status", "planned").select("*").single();
+  if (updateError) throw updateError;
+  return data;
+}
+
+export async function submitPayoutBatch(batchId: string, signedTransaction: string) {
+  if (process.env.DRY_RUN !== "false") throw new Error("Live payout submission is locked while DRY_RUN is enabled");
+  const db = getAdminDb();
+  const { data: pause } = await db.from("system_config").select("value").eq("key", "reward_engine_paused").maybeSingle();
+  if (pause?.value !== false) throw new Error("Reward engine is paused; payout signing is locked");
+  const { data: batch, error } = await db.from("payout_batches").select("*").eq("id", batchId).single();
+  if (error) throw error;
+  if (batch.status === "confirmed") return reconcilePayoutBatch(batchId);
+  if (batch.status !== "prepared" && !["submitted", "uncertain"].includes(batch.status)) throw new Error(`Payout batch is ${batch.status}`);
+  const treasury = process.env.TOPBLAST_TREASURY_ADDRESS;
+  if (!treasury) throw new Error("TOPBLAST_TREASURY_ADDRESS is required");
+  const inspected = inspectSignedCheckedTransfer({ signedTransaction, expectedMessageHash: batch.unsigned_message_hash, expectedPayer: treasury });
+  if (batch.signature && batch.signature !== inspected.signature) throw new Error("A different transaction is already bound to this payout batch");
+  const { error: submitError } = await db.rpc("submit_payout_batch", { p_batch_id: batchId, p_signature: inspected.signature, p_signed_transaction: signedTransaction });
+  if (submitError) throw submitError;
+  try { await broadcastSignedCheckedTransfer(signedTransaction); }
+  catch (caught) {
+    await db.from("payout_batches").update({ status: "uncertain", error_message: caught instanceof Error ? caught.message : "Broadcast result uncertain" }).eq("id", batchId).neq("status", "confirmed");
+  }
+  return reconcilePayoutBatch(batchId);
+}
+
+export async function reconcilePayoutBatch(batchId: string) {
+  const db = getAdminDb();
+  const { data: batch, error } = await db.from("payout_batches").select("*").eq("id", batchId).single();
+  if (error) throw error;
+  if (batch.status === "confirmed") return { status: "confirmed", signature: batch.signature, batchId };
+  if (!batch.signature || !batch.signed_transaction) return { status: batch.status, signature: batch.signature, batchId };
+  const finality = await verifyFinalizedSignedTransaction(batch.signature, batch.signed_transaction);
+  if (!finality) {
+    const height = await solanaRpc<number>("getBlockHeight", [{ commitment: "finalized" }]);
+    if (batch.last_valid_block_height && height > Number(batch.last_valid_block_height)) {
+      const { error: expireError } = await db.rpc("expire_payout_batch", { p_batch_id: batchId });
+      if (expireError) throw expireError;
+      return { status: "expired_reprepare", signature: batch.signature, batchId };
+    }
+    return { status: "submitted", signature: batch.signature, batchId };
+  }
+  const { error: rpcError } = await db.rpc("confirm_payout_batch", { p_batch_id: batchId, p_slot: finality.slot, p_proof: { version: 1, ...finality, manifestHash: batch.manifest_hash } });
+  if (rpcError) throw rpcError;
+  return { status: "confirmed", signature: batch.signature, batchId, proof: finality };
+}

@@ -1,39 +1,35 @@
-# TopBlast Launchpad MVP
+# TopBlast Launch
 
-Launch through StonkFun, then track verified buyers and run isolated, funded TopBlast reward epochs.
+The StonkFun launchpad layer for funded TopBlast rewards.
 
-## Current source audit
+Creators launch through StonkFun’s official non-custodial API. TopBlast registers the finalized LaunchLab market, replays finalized Solana blocks, tracks exact verified buy basis per launch, accepts attributable creator deposits, creates conservative reward snapshots, reserves funded budgets, prepares wallet-approved payouts, reconciles finality, and publishes proof.
 
-The provided workspace and adjacent workspace were empty, and the connected GitHub installation exposed no TopBlast repository. No existing TopBlast production code could be audited or reused. The engine in this MVP therefore implements the mechanics stated in the brief, but it must be compared with the real TopBlast engine before production payouts.
+## Funding model
 
-## StonkFun integration
+StonkFun standard LaunchLab creator fees are forwarded to the creator wallet. The public API does not expose a per-launch fee-recipient split. TopBlast therefore uses explicit creator deposits. The fixed launch allocation is enforced in the deposit transaction: the reward and protocol amounts are transferred, while the creator portion stays in the creator wallet. A slider alone never counts as funding.
 
-The adapter uses the official public API at `https://www.stonkfun.xyz/api/public/v1`:
+## Reused TopBlast behavior
 
-- `GET /pairs?launchable=true&launchLabReady=true`
-- `POST /launches/prepare`
-- creator wallet signs the returned payment transaction locally
-- `POST /launches/submit`
-- `GET /launches/{paymentSignature}` while processing
-- fee read and claim prepare/submit methods
+- Exact integer weighted-average entry and proportional basis removal
+- Incoming transfers receive zero purchase basis
+- Sells and outgoing transfers exclude the wallet for the epoch
+- Conservative finalized price coverage using the higher of TWAP or spot
+- Loss-weighted deterministic allocation bounded by funded budget
+- Durable leases, cursors, idempotency keys, saved signed wire bytes, and finalized reconciliation
 
-StonkFun LaunchLab currently forwards the standard creator share to the creator wallet. The API does not expose a fee-recipient split or delegation field. Therefore TopBlast cannot automatically take the configured share from a user-owned creator wallet. Rewards only use confirmed `fee_events` attributed to the same `launch_id`; funding that event is a manual creator deposit until StonkFun adds routing/delegation or a reviewed custody design is approved.
+The prior single-token implementation was used as the behavioral source. Configuration and every financial row are now scoped by `launch_id`.
 
-## Local setup
+## Local verification
 
 ```bash
 cp .env.example .env.local
 pnpm install
-pnpm dev
-```
-
-Apply `supabase/migrations/202609130001_topblast_multilaunch.sql`, configure a Helius enhanced-transaction webhook to `/api/indexer/helius` with `Authorization: Bearer $HELIUS_WEBHOOK_SECRET`, and leave both `DRY_RUN=true` and `reward_engine_paused=true` until snapshot proofs are reviewed.
-
-## Verification
-
-```bash
 pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
 ```
+
+Apply all migrations in filename order. Keep `DRY_RUN=true`, `LAUNCHES_ENABLED=false`, and `reward_engine_paused=true` until infrastructure is configured and the controlled onchain acceptance cycle is approved.
+
+See `DEPLOY_NOW.md` for the exact Vercel, Railway, Helius, Supabase, wallet, and activation runbook.

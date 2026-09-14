@@ -6,6 +6,7 @@ import type {
   SubmittedLaunch,
   VenueLaunch,
   VenuePair,
+  VenueMarketData,
 } from "@/lib/venue/launch-venue-adapter";
 import type { LaunchDraft } from "@/lib/types";
 
@@ -46,7 +47,7 @@ export class StonkFunAdapter implements LaunchVenueAdapter {
         error.message ?? `StonkFun returned HTTP ${response.status}`,
         response.status,
         Boolean(error.retryable) || response.status >= 500,
-        body as Record<string, unknown>,
+        { ...body, ...error },
       );
     }
     return body.data ?? {};
@@ -72,6 +73,7 @@ export class StonkFunAdapter implements LaunchVenueAdapter {
       signedQuote: String(data.signedQuote ?? ""),
       paymentTransaction: String(data.paymentTransaction ?? ""),
       payment: (data.payment ?? {}) as PreparedLaunch["payment"],
+      expiresAt: stringValue(data.expiresAt) ?? stringValue(data.quoteExpiresAt),
       raw: data,
     };
   }
@@ -88,9 +90,15 @@ export class StonkFunAdapter implements LaunchVenueAdapter {
   }
 
   private normalizeSubmitted(data: Record<string, unknown>): SubmittedLaunch {
-    const status = data.status === "processing" ? "processing" : "completed";
+    const status = data.status;
+    if (!["processing", "completed", "failed"].includes(String(status))) {
+      throw new StonkFunApiError("invalid_response", "StonkFun returned an unknown launch status. Check the payment before retrying.", 502, false);
+    }
+    if (status === "completed" && (!stringValue(data.mint) || !(stringValue(data.pool) ?? stringValue(data.poolAddress) ?? stringValue(data.address)))) {
+      throw new StonkFunApiError("invalid_response", "StonkFun has not returned the completed mint and pool. Check status before retrying.", 502, true);
+    }
     return {
-      status,
+      status: status as SubmittedLaunch["status"],
       paymentSignature: String(data.paymentSignature ?? data.payment_signature ?? ""),
       mint: stringValue(data.mint),
       pool: stringValue(data.pool) ?? stringValue(data.poolAddress) ?? stringValue(data.address),
@@ -117,6 +125,15 @@ export class StonkFunAdapter implements LaunchVenueAdapter {
       claimable: data.claimable && typeof data.claimable === "object" ? data.claimable as Record<string, unknown> : null,
       reason: stringValue(data.reason), scope: stringValue(data.scope), raw: data,
     };
+  }
+
+  async getMarketData(mint: string, expectedPool: string): Promise<VenueMarketData> {
+    const data = await this.call(`/tokens/${encodeURIComponent(mint)}`);
+    const token = data.token as Record<string, unknown> | undefined;
+    if (!token || token.mint !== mint || token.pool !== expectedPool) throw new Error("StonkFun market identity does not match the registered launch");
+    const market = token.market as Record<string, unknown> | undefined;
+    const metric = (name: string) => typeof market?.[name] === "number" && Number.isFinite(market[name]) && Number(market[name]) >= 0 ? Number(market[name]) : null;
+    return { priceUsd: metric("priceUsd"), marketCapUsd: metric("marketCapUsd"), volume24hUsd: metric("volume24hUsd"), liquidityUsd: metric("liquidityUsd"), raw: data };
   }
 
   async prepareCreatorFeeClaim(mint: string, creatorWallet: string): Promise<PreparedFeeClaim> {

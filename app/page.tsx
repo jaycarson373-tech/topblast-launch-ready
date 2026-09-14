@@ -1,48 +1,34 @@
 import Link from "next/link";
 import Image from "next/image";
-
-const flow = [
-  ["01", "TOKEN LAUNCH", "Creator signs once"],
-  ["02", "STONKFUN", "Launch and liquidity"],
-  ["03", "TRADING FEES", "Verified onchain"],
-  ["04", "TOPBLAST ENGINE", "Loss-weighted epochs"],
-  ["05", "UNDERWATER HOLDERS", "Funded rewards only"],
-];
+import { PlatformStatus } from "@/components/platform-status";
+import { BlastExample } from "@/components/blast-example";
 
 export default function Home() {
   return (
     <main>
+      <PlatformStatus />
       <section className="hero shell">
         <div className="eyebrow">THE LAUNCHPAD LAYER FOR TOP BLASTERS</div>
         <div className="hero-grid">
           <div>
             <Image className="hero-mark" src="/topblast-mark.png" alt="TopBlast" width={92} height={92} priority />
             <h1>LAUNCH WITH<br /><span>TOPBLAST.</span></h1>
-            <p className="hero-copy">Launch on StonkFun with the TopBlast reward engine built in.</p>
+            <p className="hero-copy">Bought in. Price dropped. Still holding? TopBlast is designed to share funded rewards with verified buyers below their entry.</p>
             <div className="hero-actions">
               <Link className="button" href="/launch">Launch token</Link>
               <Link className="button button-secondary" href="/explore">Explore launches</Link>
             </div>
-            <p className="microcopy">Your token. StonkFun underneath. TopBlast on top.</p>
+            <p className="microcopy">Launch through StonkFun. Give holders a reason to stay.</p>
           </div>
-          <div className="flow-card" aria-label="Product flow">
-            {flow.map(([number, label, detail], index) => (
-              <div className="flow-row" key={number}>
-                <span className="flow-number">{number}</span>
-                <strong>{label}</strong>
-                <span>{detail}</span>
-                {index < flow.length - 1 && <i>↓</i>}
-              </div>
-            ))}
-          </div>
+          <BlastExample />
         </div>
       </section>
       <section className="positioning">
         <div className="shell position-grid">
           <div><span>STONKFUN</span><strong>Launch + liquidity infrastructure.</strong></div>
           <div><span>OUR PLATFORM</span><strong>TopBlast reward infrastructure.</strong></div>
-          <div><span>CREATOR</span><strong>Chooses configuration.</strong></div>
-          <div><span>HOLDER</span><strong>Gets rewards when eligible.</strong></div>
+          <div><span>CREATOR</span><strong>Sets the reward allocation.</strong></div>
+          <div><span>HOLDER</span><strong>Must qualify at each snapshot.</strong></div>
         </div>
       </section>
       <section className="shell how">
@@ -51,8 +37,15 @@ export default function Home() {
           <div><span>YOUR VERIFIED ENTRY</span><b /></div>
           <p>Current price below</p>
           <div className="blast-zone">BLAST ZONE</div>
-          <small>Below your verified entry. Still holding. Eligible for funded TopBlast rewards.</small>
+          <small>Verified buy + below entry + still holding. Sells and outgoing transfers exclude you for that epoch. Rewards depend on a funded pool.</small>
         </div>
+      </section>
+      <section className="shell funding-explainer">
+        <div className="eyebrow">WHERE REWARDS COME FROM</div>
+        <h2>FUNDED FIRST.<br />REWARDED SECOND.</h2>
+        <p>Creators choose how deposited creator-fee revenue is allocated. A 70 / 20 / 10 setting means 70% for holder rewards, 20% for the creator, and 10% for the protocol.</p>
+        <p>StonkFun sends creator fees to the creator. The creator explicitly deposits the configured reward and protocol portions through a verified launch-scoped transaction. A percentage setting alone never counts as funding.</p>
+        <Link className="button button-secondary" href="/launch">Review launch setup</Link>
       </section>
     </main>
   );
