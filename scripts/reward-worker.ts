@@ -74,9 +74,17 @@ async function runCycle() {
 }
 
 const pollSeconds = Math.max(10, Number(process.env.REWARD_WORKER_POLL_SECONDS ?? 30));
-do {
-  try { await runCycle(); }
-  catch (error) { process.stderr.write(`${new Date().toISOString()} worker error: ${error instanceof Error ? error.message : "unknown error"}\n`); }
-  if (process.env.REWARD_WORKER_ONCE === "true" || stopping) break;
-  await new Promise((resolve) => setTimeout(resolve, pollSeconds * 1_000));
-} while (!stopping);
+async function main() {
+  do {
+    try { await runCycle(); }
+    catch (error) { process.stderr.write(`${new Date().toISOString()} worker error: ${error instanceof Error ? error.message : "unknown error"}\n`); }
+    if (process.env.REWARD_WORKER_ONCE === "true" || stopping) break;
+    await new Promise((resolve) => setTimeout(resolve, pollSeconds * 1_000));
+  } while (!stopping);
+}
+
+main().catch((error) => {
+  process.stderr.write(`${new Date().toISOString()} fatal worker error: ${error instanceof Error ? error.message : "unknown error"}\n`);
+  healthServer?.close();
+  process.exitCode = 1;
+});
