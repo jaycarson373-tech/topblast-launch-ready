@@ -1,6 +1,6 @@
 > Release status, September 14: the operational launch, funding, indexing, epoch, payout, reconciliation, and proof pipeline is implemented and deployed. Production rewards remain intentionally disabled until the three SQL migrations and required server-side environment variables are installed and the controlled real-money acceptance cycle is completed. `pnpm verify:production` enforces that distinction; use `pnpm verify:production -- --smoke` only for availability checks.
 
-Current infrastructure update: the Helius API/RPC connection, production webhook, webhook secret, admin token, Vercel project, and both Railway services are configured. The generated operational secrets are sealed in the hosting providers and stored in the macOS Keychain under account `topblast-production`. Do not recreate or paste them. The only infrastructure inputs still required are a fresh Supabase project plus the reward and protocol treasury **public addresses**.
+Current infrastructure update: the Helius API/RPC connection, production webhook, webhook secret, admin token, Vercel project, both Railway services, and the production Supabase schema are configured. The generated operational secrets are sealed in the hosting providers and stored in the macOS Keychain under account `topblast-production`. Do not recreate or paste them. The only infrastructure inputs still required are the reward and protocol treasury **public addresses**.
 
 # TopBlast Launch: exact go-live runbook
 
@@ -15,18 +15,9 @@ Railway services already created:
 
 Keep `LAUNCHES_ENABLED=false`, `DRY_RUN=true`, and `reward_engine_paused=true` until every check below passes.
 
-## 1. Create Supabase and paste the schema
+## 1. Supabase is complete
 
-1. Create a Supabase project in a North American region.
-2. Open **SQL Editor**, choose **New query**, and run these files once, in order:
-   - `supabase/migrations/202609130001_topblast_multilaunch.sql`
-   - `supabase/migrations/202609140001_audit_hardening.sql`
-   - `supabase/migrations/202609140002_operational_pipeline.sql`
-3. Confirm `launch_submission_receipts`, `chain_event_inbox`, `funding_intents`, `launch_funding_balances`, `price_observations`, `worker_leases`, and `payout_batches` exist.
-4. Open **Project Settings > API**.
-5. Copy the project URL and the `service_role` key. The service-role key is server-only.
-
-Do not run the migration a second time against a partially-created schema.
+The three production migrations have been applied to the existing `Topblast` Supabase project. Vercel and both Railway services already have the URL and sealed service-role credential. Do not rerun the migrations or replace these variables.
 
 ## 2. Wallet setup
 
@@ -56,24 +47,19 @@ Open **Vercel > topblast-stonkfun-launchpad > Settings > Environment Variables**
 
 ```text
 NEXT_PUBLIC_APP_URL=https://topblast-stonkfun-launchpad.vercel.app
-NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVER_ONLY_SERVICE_ROLE_KEY
 TOPBLAST_TREASURY_ADDRESS=YOUR_REWARD_TREASURY_PUBLIC_ADDRESS
 PROTOCOL_TREASURY_ADDRESS=YOUR_PROTOCOL_TREASURY_PUBLIC_ADDRESS
 ```
 
 Redeploy after saving.
 
-`HELIUS_API_KEY`, `HELIUS_WEBHOOK_ID`, `HELIUS_WEBHOOK_SECRET`, `SOLANA_RPC_URL`, and `ADMIN_API_TOKEN` are already installed in Vercel. Leave them unchanged.
+`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `HELIUS_API_KEY`, `HELIUS_WEBHOOK_ID`, `HELIUS_WEBHOOK_SECRET`, `SOLANA_RPC_URL`, and `ADMIN_API_TOKEN` are already installed in Vercel. Leave them unchanged.
 
 ## 5. Paste these variables into both Railway services
 
 Open the Railway `topblast-launch` project. For both `web` and `rewards-worker`, use **Variables > RAW Editor** and paste:
 
 ```text
-SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVER_ONLY_SERVICE_ROLE_KEY
 TOPBLAST_TREASURY_ADDRESS=YOUR_REWARD_TREASURY_PUBLIC_ADDRESS
 PROTOCOL_TREASURY_ADDRESS=YOUR_PROTOCOL_TREASURY_PUBLIC_ADDRESS
 ```
@@ -85,7 +71,7 @@ web: SERVICE_MODE=web
 rewards-worker: SERVICE_MODE=worker
 ```
 
-The Helius, admin, worker-limit, StonkFun, dry-run, and launch-gate variables are already installed in both Railway services. Leave them unchanged. Seal the newly supplied `SUPABASE_SERVICE_ROLE_KEY` after saving it.
+The Supabase, Helius, admin, worker-limit, StonkFun, dry-run, and launch-gate variables are already installed in both Railway services. Leave them unchanged.
 
 ## 6. Verify before enabling launches
 
