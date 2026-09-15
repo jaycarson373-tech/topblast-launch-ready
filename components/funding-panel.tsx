@@ -39,6 +39,7 @@ export function FundingPanel({ launchId, creatorWallet, venue = "stonkfun" }: { 
     const events = wallet?.features["standard:events"] as Events | undefined;
     if (!events) return;
     return events.on("change", ({ accounts }) => {
+      if (!accounts) return;
       const next = accounts?.find((item) => item.chains.some((chain) => chain.startsWith("solana:"))) ?? null;
       if (next?.address === account?.address) return;
       setAccount(null); setReview(null);

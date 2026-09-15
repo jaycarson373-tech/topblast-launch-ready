@@ -81,6 +81,7 @@ export function LaunchForm() {
     const events = walletObject?.features["standard:events"] as EventsFeature | undefined;
     if (!events) return;
     return events.on("change", ({ accounts }) => {
+      if (!accounts) return;
       const next = accounts?.find((item) => item.chains.some((chain) => chain.startsWith("solana:"))) ?? null;
       if (next?.address === wallet?.address) return;
       setWallet(next);
@@ -134,8 +135,10 @@ export function LaunchForm() {
     if (body.status !== "completed") throw new Error(body.status === "failed" ? "The venue reports a failed launch. Keep this receipt and verify the payment before starting again." : "The launch is still processing. Use Check launch status; do not pay again.");
     setResult({ mint: String(body.mint), pool: String(body.pool), signature: String(body.signature ?? body.paymentSignature), trackerStatus: String(body.trackerStatus ?? "pending") });
     setPrepared(null);
-    setReceipt(null);
-    try { localStorage.removeItem(RECEIPT_KEY); } catch { /* No signing depends on storage. */ }
+    if (body.trackerStatus === "active") {
+      setReceipt(null);
+      try { localStorage.removeItem(RECEIPT_KEY); } catch { /* No signing depends on storage. */ }
+    }
   }
 
   async function checkStatus(quiet = false) {
