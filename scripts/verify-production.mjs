@@ -6,11 +6,13 @@ const checks = [
   ["explore page", "/explore", [200]],
   ["liveness", "/api/live", [200]],
   ["health", "/api/health", smokeOnly ? [200, 503] : [200]],
+  ["metadata route validation", "/api/metadata/not-an-id", [400]],
+  ["launch route validation", "/api/launch/prepare", [400], { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }],
 ];
 
 let failed = false;
-for (const [name, path, accepted] of checks) {
-  const response = await fetch(`${baseUrl}${path}`, { signal: AbortSignal.timeout(20_000) });
+for (const [name, path, accepted, init] of checks) {
+  const response = await fetch(`${baseUrl}${path}`, { ...init, signal: AbortSignal.timeout(20_000) });
   const okay = accepted.includes(response.status);
   process.stdout.write(`${okay ? "PASS" : "FAIL"} ${name}: HTTP ${response.status}\n`);
   if (path === "/api/health") {
