@@ -5,6 +5,7 @@ const checks = [
   ["launch page", "/launch", [200]],
   ["free rehearsal", "/test", [200]],
   ["explore page", "/explore", [200]],
+  ["public documentation", "/docs", [200]],
   ["liveness", "/api/live", [200]],
   ["health", "/api/health", smokeOnly ? [200, 503] : [200]],
   ["metadata route validation", "/api/metadata/not-an-id", [400]],

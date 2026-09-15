@@ -9,6 +9,7 @@ export function SiteNav() {
         <Link href="/test">Test now</Link>
         <Link href="/explore">Explore</Link>
         <Link href="/creator">Creator</Link>
+        <Link href="/docs">Docs</Link>
         <Link href="/launch" className="button button-small">Launch token</Link>
       </nav>
     </header>

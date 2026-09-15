@@ -1,9 +1,9 @@
-> September 15: StonkFun and Pump.fun creation paths are implemented. Production launches and payouts remain gated pending treasury public addresses and controlled real-money acceptance. Pump.fun also requires the fourth SQL migration below. A passed build or read-only simulation is not a completed launch-to-payout cycle.
+> September 15 update: StonkFun and Pump.fun creation paths are implemented, and all four database migrations are applied. Production launches and payouts remain gated pending treasury public addresses and controlled real-money acceptance. Railway services currently point at the separate `topblast-robinhood` repository; service ownership must be resolved before another launchpad worker deployment. A passed build or read-only simulation is not a completed launch-to-payout cycle.
 
 ## September 15: exact remaining setup
 
 1. Supply `TOPBLAST_TREASURY_ADDRESS` and `PROTOCOL_TREASURY_ADDRESS`, both public Solana wallet addresses. The reward wallet must be connectable to approve payouts. No private keys go into Vercel or Railway.
-2. Open [the existing Supabase SQL editor](https://supabase.com/dashboard/project/pmbrkwohiaapxcouoiux/sql/new) and run **only** `supabase/migrations/202609150001_pumpfun.sql`. The previous three migrations are already installed. The new migration expands the venue constraints and adds immutable metadata storage with RLS. It has been tested in local PostgreSQL; the current session has no authenticated database-management access to apply it remotely.
+2. Supabase is complete. The fourth migration was applied through the signed-in editor, and production health confirms `pumpSchemaReady=true`. Confirm whether Railway's existing `topblast-launch` services should run this StonkFun/Pump launchpad or the separately connected Robinhood application. Do not overwrite the other application's deployments without this choice.
 3. Keep `LAUNCHES_ENABLED=false`, `PUMPFUN_ENABLED=false` (default), and `DRY_RUN=true` until the addresses are installed and reviewed. `PUMPFUN_ENABLED=true` enables the second venue only after its migration and controlled acceptance setup. No Pump.fun API key is required.
 4. Creator wallet: fund the amount shown by the simulated launch review. Reward treasury: fund transaction fees in SOL, then use each launch's creator deposit action to fund its isolated ledger. A plain transfer to the treasury is not attributed reward funding. Pump.fun deposits wrap SOL into WSOL; Pump.fun payouts use WSOL. StonkFun uses STONK. No swap is involved.
 5. During controlled acceptance, enable launches, set `DRY_RUN=false`, and use **Admin > Enable epoch planning**. Creator signs creation and funding; treasury wallet signs the reviewed payout. Verify finalized public proof, restart recovery, and two-launch isolation before public opening.
@@ -29,7 +29,7 @@ Keep `LAUNCHES_ENABLED=false`, `DRY_RUN=true`, and `reward_engine_paused=true` u
 
 ## 1. Supabase is complete
 
-The three production migrations have been applied to the existing `Topblast` Supabase project. Vercel and both Railway services already have the URL and sealed service-role credential. Do not rerun the migrations or replace these variables.
+All four production migrations have been applied to the existing `Topblast` Supabase project. Vercel has the URL and sealed service-role credential. Railway was previously configured too, but must be rechecked after resolving the repository ownership conflict. Do not recreate Supabase or replace working Vercel credentials.
 
 ## 2. Wallet setup
 

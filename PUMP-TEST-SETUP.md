@@ -11,15 +11,9 @@ Pump.fun native holder rewards are **not** enabled. They are distributed by Pump
 
 ## Required operator action
 
-Railway rejected the September 15 service updates because the account trial expired. Select a plan in Railway, then redeploy the existing web and worker services from this repository. The new Vercel release is deployed; the Railway worker is still on its older release until this is resolved.
+September 15 update: Railway billing now accepts deployments. However, the existing `topblast-launch` project's `web` and `rewards-worker` services have been connected to `jaycarson373-tech/topblast-robinhood`. Its automatic deployments superseded this launchpad's uploads. Confirm which application owns those services before reconnecting or redeploying. Do not overwrite Robinhood's configuration or create duplicate paid services without that choice.
 
-The existing Supabase project is connected. Its Pump migration is not applied as of this release.
-
-Open the SQL editor in that same project and paste the contents of:
-
-`supabase/migrations/202609150001_pumpfun.sql`
-
-The migration is transactional and safe to re-run. It enables Pump venue records, adds immutable metadata storage, and blocks treasury self-funding. It does not delete launch or reward history. No new Supabase project is needed.
+The existing Supabase project is connected. `202609150001_pumpfun.sql` was applied through its signed-in SQL editor on September 15. The deployed health endpoint now reports `pumpSchemaReady=true`. Live permission checks verified metadata RLS enabled, anonymous reads denied, and service-role insert allowed but update/delete denied. No SQL copy/paste or new Supabase project is needed.
 
 Supply these public wallet addresses for Vercel and Railway:
 
