@@ -28,6 +28,7 @@ export async function prepareLaunchFunding(launchId: string, funderWallet: strin
   if (launch.creator_wallet !== funderWallet) throw new Error("Connect the launch creator wallet to attribute creator-fee funding");
   const config = Array.isArray(launch.launch_configs) ? launch.launch_configs[0] : launch.launch_configs;
   if (!config?.treasury_address) throw new Error("This launch has no configured reward treasury");
+  if (config.treasury_address === funderWallet) throw new Error("Use a separate creator funding wallet. A treasury self-transfer cannot fund rewards.");
 
   const mintProbe = await prepareCheckedTransfer({
     payer: funderWallet,

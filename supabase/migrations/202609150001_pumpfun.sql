@@ -1,4 +1,5 @@
 begin;
+alter table public.funding_intents add constraint funding_intents_no_self_funding check (funder_wallet <> reward_treasury);
 alter table public.launches drop constraint launches_venue_check;
 alter table public.launches add constraint launches_venue_check check (venue in ('stonkfun','pumpfun'));
 alter table public.tracked_markets drop constraint tracked_markets_venue_check;

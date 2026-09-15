@@ -22,6 +22,7 @@ describe("Supabase migrations", () => {
       await db.query("insert into public.funding_intents(id,launch_id,funder_wallet,asset_mint,gross_amount_atoms,reward_amount_atoms,creator_amount_atoms,protocol_amount_atoms,reward_treasury,protocol_treasury,memo,unsigned_transaction,unsigned_message_hash,last_valid_block_height,status,signature,expires_at) values(gen_random_uuid(),$1,'creator','stonk',100,70,20,10,'treasury','protocol',$2,'wire','hash',99,'submitted',$3,now()+interval '1 minute')", [id, `memo-${id}`, `signature-${id}`]);
     }
     const intentA = await db.query<{ id: string }>("select id from public.funding_intents where launch_id=$1", [a]);
+    await expect(db.query("update public.funding_intents set reward_treasury=funder_wallet where launch_id=$1", [a])).rejects.toThrow("funding_intents_no_self_funding");
     const intentB = await db.query<{ id: string }>("select id from public.funding_intents where launch_id=$1", [b]);
     const creditedA = await db.query<{ confirm_funding_deposit: boolean }>("select public.confirm_funding_deposit($1,$2,10,now(),'{}'::jsonb)", [intentA.rows[0].id, `signature-${a}`]);
     expect(creditedA.rows[0].confirm_funding_deposit).toBe(true);
