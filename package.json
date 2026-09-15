@@ -19,6 +19,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "verify:pump": "tsx scripts/verify-pump-readonly.ts",
     "worker:rewards": "tsx scripts/reward-worker.ts",
     "railway:start": "node scripts/railway-start.mjs",
     "verify:production": "node scripts/verify-production.mjs"

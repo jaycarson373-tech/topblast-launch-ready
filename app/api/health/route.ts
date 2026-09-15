@@ -3,6 +3,7 @@ import { getAdminDb } from "@/lib/db/server";
 import { runtimeReadiness } from "@/lib/readiness";
 import { StonkFunAdapter } from "@/lib/venue/stonkfun-adapter";
 import { getTreasuryBalance } from "@/lib/solana/rpc";
+import { pumpCreationAvailable } from "@/lib/solana/pumpfun";
 
 export const runtime = "nodejs";
 
@@ -16,6 +17,7 @@ export async function GET() {
   let enginePaused = true;
   let acceptedCycle = false;
   let pumpSchemaReady = false;
+  let pumpPairReady = false;
   if (readiness.database) {
     const { data, error } = await getAdminDb().from("system_config").select("key,value").in("key", ["worker_heartbeat", "reward_engine_paused"]);
     databaseReachable = !error;
@@ -34,6 +36,7 @@ export async function GET() {
   } catch {
     stonkPairReady = false;
   }
+  try { pumpPairReady = await pumpCreationAvailable(); } catch { pumpPairReady = false; }
   if (readiness.treasury && process.env.TOPBLAST_TREASURY_ADDRESS) {
     try {
       const balance = await getTreasuryBalance(process.env.TOPBLAST_TREASURY_ADDRESS);
@@ -43,13 +46,32 @@ export async function GET() {
       treasuryRpcReachable = false;
     }
   }
-  const ready = readiness.launchReady && databaseReachable && stonkPairReady && treasuryRpcReachable;
+  const stonkLaunchReady = readiness.launchReady && databaseReachable && stonkPairReady && treasuryRpcReachable;
+  const pumpEnabled = process.env.PUMPFUN_ENABLED === "true";
+  const pumpLaunchReady = readiness.launchReady && databaseReachable && pumpSchemaReady && pumpPairReady && pumpEnabled && treasuryRpcReachable;
+  const ready = stonkLaunchReady || pumpLaunchReady;
   const rewardsReady = ready && workerFresh && !enginePaused && !readiness.dryRun && acceptedCycle;
   const rewardBlockers = [!workerFresh && "Operational worker heartbeat", enginePaused && "Reward engine is paused", readiness.dryRun && "DRY_RUN is enabled", !acceptedCycle && "No accepted end-to-end payout proof yet"].filter(Boolean);
   return NextResponse.json({
     status: ready ? "ready" : "configuration_required",
     ready,
     launchReady: ready,
+    venues: {
+      stonkfun: { launchReady: stonkLaunchReady, pairReady: stonkPairReady, rewardAsset: "STONK", fundingMode: "creator_deposit" },
+      pumpfun: {
+        launchReady: pumpLaunchReady, pairReady: pumpPairReady, schemaReady: pumpSchemaReady,
+        enabled: pumpEnabled, rewardAsset: "WSOL", fundingMode: "creator_deposit", graduationSupported: false,
+        blockers: [
+          ...readiness.missing,
+          !readiness.launchesEnabled && "LAUNCHES_ENABLED is false",
+          !databaseReachable && "Database unavailable",
+          !pumpSchemaReady && "Apply 202609150001_pumpfun.sql in Supabase",
+          !pumpEnabled && "PUMPFUN_ENABLED is false",
+          !pumpPairReady && "Pump.fun mainnet creation unavailable",
+          !treasuryRpcReachable && "Treasury RPC check incomplete",
+        ].filter(Boolean),
+      },
+    },
     rewardsReady,
     rewardStatus: acceptedCycle ? rewardsReady ? "operational" : "configured_but_paused" : "acceptance_cycle_required",
     rewardBlockers,
@@ -58,6 +80,7 @@ export async function GET() {
       databaseReachable,
       stonkPairReady,
       pumpEnabled: process.env.PUMPFUN_ENABLED === "true" && pumpSchemaReady,
+      pumpPairReady,
       pumpSchemaReady,
       indexerConfigured: readiness.indexer,
       treasuryConfigured: readiness.treasury,

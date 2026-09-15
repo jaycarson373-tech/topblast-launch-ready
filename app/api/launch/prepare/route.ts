@@ -22,10 +22,10 @@ export async function POST(request: Request) {
     const adapter = launchVenue(draft.venue);
     const pair = await adapter.getPair(draft.quoteMint);
     if (!pair?.launchable || pair.launchLabReady === false) {
-      return NextResponse.json({ error: "The STONK pair is not currently launchable on StonkFun" }, { status: 503 });
+      return NextResponse.json({ error: "The selected pair is not currently launchable on this venue" }, { status: 503 });
     }
     const prepared = await adapter.createLaunch(draft);
-    if (!prepared.signedQuote || !prepared.paymentTransaction) throw new Error("StonkFun returned an incomplete launch quote");
+    if (!prepared.signedQuote || !prepared.paymentTransaction) throw new Error("The venue returned an incomplete launch quote");
     const launchId = await createLaunchDraft(draft, prepared.signedQuote, prepared.paymentTransaction, prepared.expiresAt);
     return NextResponse.json({ launchId, ...prepared });
   } catch (error) {

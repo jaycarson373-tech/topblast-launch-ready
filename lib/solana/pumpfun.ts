@@ -5,6 +5,21 @@ import { solanaRpc } from "./rpc";
 
 export const PUMP_SOL_MINT = NATIVE_MINT.toBase58();
 export { PUMP_PROGRAM_ID };
+const MAINNET_GENESIS = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
+
+export async function assertPumpMainnet() {
+  if (await solanaRpc<string>("getGenesisHash") !== MAINNET_GENESIS) throw new Error("Pump.fun integration requires Solana mainnet. No transaction was submitted.");
+}
+
+export async function pumpCreationAvailable() {
+  await assertPumpMainnet();
+  const response = await solanaRpc<{ value: { owner: string; data: [string, string]; lamports: number; executable: boolean } | null }>("getAccountInfo", [GLOBAL_PDA.toBase58(), { encoding: "base64", commitment: "finalized" }]);
+  const account = response.value;
+  if (!account || account.owner !== PUMP_PROGRAM_ID.toBase58() || account.executable || account.data?.[1] !== "base64") throw new Error("Pump.fun global account could not be verified");
+  const global = PUMP_SDK.decodeGlobal({ ...account, owner: PUMP_PROGRAM_ID, data: Buffer.from(account.data[0], "base64") });
+  return global.initialized === true && global.createV2Enabled === true;
+}
+
 export async function readPumpCurve(mint: string, expectedPool: string) {
   const pool = bondingCurvePda(new PublicKey(mint));
   if (pool.toBase58() !== expectedPool) throw new Error("Pump.fun curve address mismatch");

@@ -16,7 +16,7 @@ Try selling, incoming/outgoing transfers, price above entry, and zero funding. F
 - Helius configured; worker heartbeat recent; STONK pair available.
 - No real launch or launch → funding → payout acceptance receipt yet.
 - Live launches locked; DRY_RUN=true; epoch planning paused.
-- Pump.fun deferred and hidden unless explicitly enabled.
+- Pump.fun selectable for review and simulation. Real creation remains separately gated. See PUMP-TEST-SETUP.md.
 
 The official StonkFun API at https://www.stonkfun.xyz/api/public/v1/openapi.json lists one server and no documented devnet endpoint or cluster selection. Do not change the production RPC to devnet while using this launch API.
 

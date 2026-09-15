@@ -8,6 +8,7 @@ import type { WalletPosition } from "@/lib/types";
 
 export const rehearsalSchema = z.object({
   version: z.literal(1),
+  venue: z.enum(["stonkfun", "pumpfun"]).default("stonkfun"),
   step: z.number().int().min(0).max(5),
   price: z.number().int().min(1).max(30),
   gross: z.number().int().min(0).max(1000),
@@ -16,7 +17,7 @@ export const rehearsalSchema = z.object({
   recoveryRuns: z.number().int().min(0).max(1000),
 });
 export type RehearsalState = z.infer<typeof rehearsalSchema>;
-export const newRehearsal = (): RehearsalState => ({ version: 1, step: 0, price: 5, gross: 100, movement: "holding", paidKeys: [], recoveryRuns: 0 });
+export const newRehearsal = (): RehearsalState => ({ version: 1, venue: "stonkfun", step: 0, price: 5, gross: 100, movement: "holding", paidKeys: [], recoveryRuns: 0 });
 export const REHEARSAL_KEY = "topblast-rehearsal-v1";
 const QUOTE_SCALE = 100n; // Fictional STONK units, deliberately not a live mint's decimals.
 export const rehearsalAmount = (atoms: bigint) => `${atoms / QUOTE_SCALE}.${(atoms % QUOTE_SCALE).toString().padStart(2, "0")}`;

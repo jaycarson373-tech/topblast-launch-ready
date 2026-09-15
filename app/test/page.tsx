@@ -5,7 +5,7 @@ export const metadata: Metadata = { title: "Test TopBlast", robots: { index: fal
 
 export default function TestPage() {
   return <main className="page shell">
-    <div className="page-header"><div><div className="eyebrow">STONKFUN TEST CENTER</div><h1>TEST THE LOOP.<br /><span>NO FUNDS NEEDED.</span></h1></div><p>Try TopBlast’s real position and reward calculations with fictional tokens. No wallet, payment, token creation, or database setup required.</p></div>
+    <div className="page-header"><div><div className="eyebrow">STONKFUN + PUMP.FUN TEST CENTER</div><h1>TEST THE LOOP.<br /><span>NO FUNDS NEEDED.</span></h1></div><p>Try TopBlast’s real position and reward calculations with fictional tokens. No wallet, payment, token creation, or database setup required.</p></div>
     <Rehearsal />
   </main>;
 }

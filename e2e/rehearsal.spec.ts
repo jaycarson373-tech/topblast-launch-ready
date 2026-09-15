@@ -45,5 +45,20 @@ test("production status failure is distinct from a working simulation", async ({
   await expect(page.getByText("REHEARSAL COMPLETE", { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Open real launch form" }).click();
   await expect(page.getByRole("button", { name: "Activation pending", exact: true })).toBeDisabled();
-  await expect(page.getByRole("option", { name: "Pump.fun · SOL pair" })).toHaveCount(0);
+  await page.getByLabel("Launch venue").selectOption("pumpfun");
+  await expect(page.getByText("Pump.fun activation pending.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Activation pending", exact: true })).toBeDisabled();
+});
+
+test("Pump rehearsal uses SOL entry and WSOL rewards, and resets on venue change", async ({ page }) => {
+  await page.goto("/test");
+  await page.getByLabel("Sample launch venue").selectOption("pumpfun");
+  await page.getByRole("button", { name: "Run full rehearsal" }).click();
+  await expect(page.getByText("Its allocations remain 0.00 WSOL", { exact: false })).toBeVisible();
+  const holder = page.getByRole("row").filter({ hasText: "Holder A" });
+  await expect(holder).toContainText("15.00 SOL");
+  await expect(holder).toContainText("56.00 WSOL");
+  await page.getByLabel("Sample launch venue").selectOption("stonkfun");
+  await expect(page.getByText("REHEARSAL COMPLETE", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("row").filter({ hasText: "Holder A" })).toHaveCount(0);
 });

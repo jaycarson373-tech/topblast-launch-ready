@@ -6,11 +6,18 @@ import { describe, expect, it } from "vitest";
 describe("Supabase migrations", () => {
   it("applies cleanly and enforces launch-scoped funding keys", async () => {
     const db = new PGlite();
-    await db.exec("create role service_role; create role anon; create role authenticated;");
+    // Supabase's service_role bypasses RLS but still obeys SQL table privileges.
+    await db.exec("create role service_role bypassrls; create role anon; create role authenticated;");
     for (const file of ["202609130001_topblast_multilaunch.sql", "202609140001_audit_hardening.sql", "202609140002_operational_pipeline.sql", "202609150001_pumpfun.sql"]) {
       const sql = (await readFile(join(process.cwd(), "supabase", "migrations", file), "utf8")).replace("create extension if not exists pgcrypto;", "");
       await db.exec(sql);
     }
+    await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609150001_pumpfun.sql"), "utf8"));
+    await db.exec("set role service_role");
+    await db.query("insert into public.launch_metadata(id,metadata,image_data) values('00000000-0000-4000-8000-000000000099','{}','test-image')");
+    await expect(db.query("update public.launch_metadata set image_data='overwritten'")).rejects.toThrow();
+    await expect(db.query("delete from public.launch_metadata")).rejects.toThrow();
+    await db.exec("reset role");
     const result = await db.query<{ table_name: string }>("select table_name from information_schema.tables where table_schema='public' and table_name in ('funding_deposits','launch_funding_balances','payout_batches','worker_leases') order by table_name");
     expect(result.rows.map((row) => row.table_name)).toEqual(["funding_deposits", "launch_funding_balances", "payout_batches", "worker_leases"]);
     const columns = await db.query<{ column_name: string }>("select column_name from information_schema.columns where table_schema='public' and table_name='funding_deposits'");

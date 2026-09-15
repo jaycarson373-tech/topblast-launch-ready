@@ -55,8 +55,8 @@ export function LaunchForm() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<Record<string, string> | null>(null);
-  const [runtime, setRuntime] = useState<{ ready: boolean; missing: string[]; pumpEnabled: boolean } | null>(null);
-  const venueReady = Boolean(runtime?.ready && (venue === "stonkfun" || runtime.pumpEnabled));
+  const [runtime, setRuntime] = useState<{ ready: boolean; missing: string[]; pumpReady: boolean; pumpBlockers: string[] } | null>(null);
+  const venueReady = Boolean(venue === "stonkfun" ? runtime?.ready : runtime?.pumpReady);
   const total = useMemo(() => allocation.topblastPercent + allocation.creatorPercent + allocation.protocolPercent, [allocation]);
 
   useEffect(() => {
@@ -66,8 +66,8 @@ export function LaunchForm() {
     } catch { /* Storage may be unavailable; in-memory state still prevents resubmission. */ }
     fetch("/api/health", { cache: "no-store" })
       .then((response) => response.json())
-      .then((body) => setRuntime({ ready: Boolean(body.ready), missing: body.missing ?? [], pumpEnabled: Boolean(body.checks?.pumpEnabled) }))
-      .catch(() => setRuntime({ ready: false, missing: ["runtime health check"], pumpEnabled: false }));
+      .then((body) => setRuntime({ ready: body.venues?.stonkfun ? body.venues.stonkfun.launchReady === true : body.ready === true, missing: body.missing ?? [], pumpReady: body.venues?.pumpfun?.launchReady === true, pumpBlockers: body.venues?.pumpfun?.blockers ?? ["Pump.fun readiness has not been verified"] }))
+      .catch(() => setRuntime({ ready: false, missing: ["runtime health check"], pumpReady: false, pumpBlockers: ["Runtime health check unavailable"] }));
   }, []);
 
   useEffect(() => {
@@ -82,7 +82,7 @@ export function LaunchForm() {
     if (!events) return;
     return events.on("change", ({ accounts }) => {
       if (!accounts) return;
-      const next = accounts?.find((item) => item.chains.some((chain) => chain.startsWith("solana:"))) ?? null;
+      const next = accounts.find((item) => item.chains.includes("solana:mainnet")) ?? null;
       if (next?.address === wallet?.address) return;
       setWallet(next);
       if (prepared && !receipt) setPrepared(null);
@@ -103,8 +103,8 @@ export function LaunchForm() {
     const candidate = wallets.find((item) => item.name === selectedWallet && item.features["standard:connect"] && item.features["solana:signTransaction"]);
     if (!candidate) throw new Error("Install a Wallet Standard Solana wallet to continue");
     const response = await (candidate.features["standard:connect"] as ConnectFeature).connect();
-    const account = response.accounts.find((item) => item.chains.some((chain) => chain.startsWith("solana:"))) ?? response.accounts[0];
-    if (!account) throw new Error("The wallet did not expose a Solana account");
+    const account = response.accounts.find((item) => item.chains.includes("solana:mainnet"));
+    if (!account) throw new Error("This launch requires a wallet account that supports Solana mainnet");
     setWallet(account); setWalletName(candidate.name); setWalletObject(candidate);
   }
 
@@ -158,6 +158,7 @@ export function LaunchForm() {
     setBusy(true); setError("");
     try {
       const signer = walletObject.features["solana:signTransaction"] as SignTransactionFeature;
+      if (!walletObject.accounts.some((account) => account.address === wallet.address && account.chains.includes("solana:mainnet"))) throw new Error("Wallet account changed or disconnected. Reconnect and prepare a fresh review.");
       if (prepared.expiresAt && new Date(prepared.expiresAt).getTime() <= Date.now()) throw new Error("Quote expired. Edit details and prepare a fresh review.");
       let bytes = decodeBase64(prepared.paymentTransaction);
       if (prepared.review.venue === "pumpfun") {
@@ -183,10 +184,10 @@ export function LaunchForm() {
 
   return (
     <form className="panel" onSubmit={(event) => { event.preventDefault(); void prepare(new FormData(event.currentTarget)); }}>
-      {runtime && !runtime.ready && <div className="error"><strong>Launch activation pending.</strong> The transaction button stays locked until infrastructure checks pass. Launch services are not ready yet. No payment can be submitted here.</div>}
+      {runtime && !venueReady && <div className="error"><strong>{venue === "pumpfun" ? "Pump.fun activation pending." : "Launch activation pending."}</strong> The transaction button stays locked until infrastructure checks pass. No payment can be submitted here.{venue === "pumpfun" && <ul>{runtime.pumpBlockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul>}</div>}
       <fieldset disabled={busy || Boolean(prepared) || Boolean(receipt)}>
       <div className="form-grid">
-        <div className="field full"><label htmlFor="venue">Launch venue</label><select id="venue" value={venue} onChange={(event) => setVenue(event.target.value as typeof venue)}><option value="stonkfun">StonkFun · STONK pair</option>{runtime?.pumpEnabled && <option value="pumpfun">Pump.fun · SOL pair</option>}</select>{venue === "pumpfun" && <p className="notice">Regular Pump.fun token with TopBlast deposit-funded rewards paid in WSOL. Pump.fun native holder rewards are separate and are not enabled. Tracking pauses at graduation until the new market is verified.</p>}</div>
+        <div className="field full"><label htmlFor="venue">Launch venue</label><select id="venue" value={venue} onChange={(event) => setVenue(event.target.value as typeof venue)}><option value="stonkfun">StonkFun · STONK pair</option><option value="pumpfun">Pump.fun · SOL pair</option></select>{venue === "pumpfun" && <p className="notice">Regular Pump.fun token with TopBlast deposit-funded rewards paid in WSOL. Pump.fun native holder rewards are separate and are not enabled. Tracking pauses at graduation until the new market is verified.</p>}</div>
         <div className="field"><label htmlFor="name">Token name</label><input id="name" name="name" required maxLength={32} placeholder="Top Coin" /></div>
         <div className="field"><label htmlFor="symbol">Ticker</label><input id="symbol" name="symbol" required maxLength={10} placeholder="TOP" /></div>
         <div className="field full"><label htmlFor="description">Description</label><textarea id="description" name="description" maxLength={500} placeholder="What this token is for." /></div>
@@ -223,7 +224,7 @@ export function LaunchForm() {
           <h3>{prepared.review.name} · ${prepared.review.symbol}</h3>
           <p className="notice">Venue: {prepared.review.venue === "pumpfun" ? "Pump.fun" : "StonkFun"}. Pair: {prepared.review.symbol} / {prepared.review.quoteSymbol}. Allocation: {prepared.review.allocation.topblastPercent}% rewards, {prepared.review.allocation.creatorPercent}% creator retained, {prepared.review.allocation.protocolPercent}% protocol.</p>
           {prepared.review.venue === "pumpfun" && <p className="notice">Shown SOL cost is the simulated debit for network fees and account creation. No initial buy. Creator fees follow Pump.fun’s schedule. TopBlast rewards require a separate creator deposit.</p>}
-          <p className="notice">Network: Solana mainnet. Fee payer: <span className="mono">{wallet?.address}</span>. Payment: {prepared.payment.sol ?? prepared.payment.lamports ?? "See wallet"} {prepared.payment.sol ? "SOL" : "lamports"}. Recipient: <span className="mono">{prepared.payment.recipient ?? "Shown by your wallet"}</span>. Quote expires: {prepared.expiresAt ? new Date(prepared.expiresAt).toLocaleTimeString() : "about 90 seconds after preparation"}.</p>
+          <p className="notice">Network: Solana mainnet. Fee payer: <span className="mono">{wallet?.address}</span>. {prepared.review.venue === "pumpfun" ? "Estimated SOL debit" : "Payment"}: {prepared.payment.sol ?? prepared.payment.lamports ?? "See wallet"} {prepared.payment.sol !== undefined ? "SOL" : "lamports"}. {prepared.review.venue === "pumpfun" ? "Launch program" : "Recipient"}: <span className="mono">{prepared.payment.recipient ?? "Shown by your wallet"}</span>. Quote expires: {prepared.expiresAt ? new Date(prepared.expiresAt).toLocaleTimeString() : "about 90 seconds after preparation"}.</p>
           <button type="button" className="button" disabled={busy} onClick={signAndSubmit}>Confirm in wallet</button> <button type="button" className="button button-secondary" disabled={busy} onClick={() => setPrepared(null)}>Edit details</button>
         </div>
       )}

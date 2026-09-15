@@ -2,14 +2,15 @@
 import { PublicKey, Transaction, ComputeBudgetProgram } from "@solana/web3.js";
 import { PUMP_SDK, PUMP_PROGRAM_ID, pumpIdl } from "../lib/solana/pump-sdk";
 import { solanaRpc } from "../lib/solana/rpc";
-import { inspectPumpMarket, PUMP_SOL_MINT } from "../lib/solana/pumpfun";
+import { inspectPumpMarket, PUMP_SOL_MINT, pumpCreationAvailable } from "../lib/solana/pumpfun";
 import { decode58, type FinalizedBlockTransaction } from "../lib/indexer/launchlab-decoder";
 import { decodeFinalizedPumpTransaction } from "../lib/indexer/pumpfun-decoder";
 
 process.env.SOLANA_RPC_URL ??= "https://api.mainnet-beta.solana.com";
 async function main() {
-  const signatures = await solanaRpc<Array<{ signature: string; err: unknown }>>("getSignaturesForAddress", [PUMP_PROGRAM_ID.toBase58(), { limit: 10, commitment: "finalized" }]);
-  for (const row of signatures.filter((item) => !item.err)) {
+  if (!await pumpCreationAvailable()) throw new Error("Pump.fun mainnet creation is not currently enabled");
+  const signatures = await solanaRpc<Array<{ signature: string; err: unknown }>>("getSignaturesForAddress", [PUMP_PROGRAM_ID.toBase58(), { limit: 20, commitment: "finalized" }]);
+  transactions: for (const row of signatures.filter((item) => !item.err)) {
     const tx = await solanaRpc<(FinalizedBlockTransaction & { slot: number }) | null>("getTransaction", [row.signature, { encoding: "jsonParsed", commitment: "finalized", maxSupportedTransactionVersion: 0 }]);
     if (!tx) continue;
     const instructions = [...tx.transaction.message.instructions, ...tx.meta?.innerInstructions?.flatMap((item) => item.instructions) ?? []];
@@ -30,6 +31,10 @@ async function main() {
       const payerKey = tx.transaction.message.accountKeys.find((item) => typeof item !== "string" && item.signer);
       if (!payerKey || typeof payerKey === "string") throw new Error("No public simulation fee payer");
       const payer = new PublicKey(payerKey.pubkey);
+      const balance = await solanaRpc<{ value: number }>("getBalance", [payer.toBase58(), { commitment: "finalized" }]);
+      // Discovery is not a funding action. Skip tiny trading wallets that cannot
+      // cover even simulated mint/account rent; never request an airdrop or transfer.
+      if (!Number.isSafeInteger(balance.value) || balance.value < 50_000_000) continue transactions;
       // A random public mint is enough for sigVerify:false. No key is created or held.
       const mintBytes = new Uint8Array(32); crypto.getRandomValues(mintBytes); const simulatedMint = new PublicKey(mintBytes);
       const create = await PUMP_SDK.createV2Instruction({ mint: simulatedMint, user: payer, creator: payer, name: "TopBlast simulation", symbol: "TBSIM", uri: "https://topblast-stonkfun-launchpad.vercel.app", mayhemMode: false, cashback: false, holderReward: false });
