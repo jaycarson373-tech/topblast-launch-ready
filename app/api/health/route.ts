@@ -24,7 +24,7 @@ export async function GET() {
     enginePaused = data?.find((row) => row.key === "reward_engine_paused")?.value !== false;
     const { count } = await getAdminDb().from("transaction_proofs").select("id", { count: "exact", head: true }).eq("kind", "distribution").not("signature", "is", null);
     acceptedCycle = (count ?? 0) > 0;
-    const pumpSchema = await getAdminDb().from("launch_metadata").select("id", { head: true, count: "exact" });
+    const pumpSchema = await getAdminDb().from("launch_metadata").select("id").limit(1);
     pumpSchemaReady = !pumpSchema.error;
   }
   try {
