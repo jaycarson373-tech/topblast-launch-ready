@@ -5,6 +5,7 @@ import type { SubmittedLaunch, VenueLaunch } from "@/lib/venue/launch-venue-adap
 import { addHeliusWebhookAddresses } from "@/lib/indexer/helius-webhook";
 import { inspectLaunchLabMarket } from "@/lib/solana/launchlab";
 import { Transaction } from "@solana/web3.js";
+import { inspectPumpMarket } from "@/lib/solana/pumpfun";
 
 export async function createLaunchDraft(draft: LaunchDraft, signedQuote: string, paymentTransaction: string, expiresAt?: string): Promise<string> {
   const transaction = Transaction.from(Buffer.from(paymentTransaction, "base64"));
@@ -22,7 +23,7 @@ export async function createLaunchDraft(draft: LaunchDraft, signedQuote: string,
     telegram_url: draft.telegram,
     quote_mint: draft.quoteMint,
     quote_symbol: draft.quoteSymbol,
-    venue: "stonkfun",
+    venue: draft.venue ?? "stonkfun",
     status: "prepared",
     signed_quote_hash: createHash("sha256").update(signedQuote).digest("hex"),
     payment_message_hash: paymentMessageHash,
@@ -68,32 +69,35 @@ export async function applyVenueLaunch(launchId: string, result: SubmittedLaunch
   if (error) throw error;
   await db.from("launch_submission_receipts").update({ status: result.status, last_error: result.status === "failed" ? "StonkFun reported launch failure" : null, updated_at: new Date().toISOString() }).eq("launch_id", launchId);
   if (completed) {
-    const { data: launch, error: launchError } = await db.from("launches").select("quote_mint,creator_wallet,launch_signature").eq("id", launchId).single();
+    const { data: launch, error: launchError } = await db.from("launches").select("venue,quote_mint,creator_wallet,launch_signature").eq("id", launchId).single();
     if (launchError) throw launchError;
     const registered = await registerLaunchTracker(launchId, {
       mint: result.mint!, pool: result.pool!, quoteMint: launch.quote_mint,
-      creator: launch.creator_wallet, launchSignature: result.signature ?? launch.launch_signature,
+      creator: launch.creator_wallet, launchSignature: result.signature ?? launch.launch_signature, venue: launch.venue,
     });
     return registered ? "active" : "failed";
   }
   return "pending";
 }
 
-export async function registerLaunchTracker(launchId: string, input?: { mint: string; pool: string; quoteMint: string; creator: string; launchSignature?: string | null }): Promise<boolean> {
+export async function registerLaunchTracker(launchId: string, input?: { mint: string; pool: string; quoteMint: string; creator: string; launchSignature?: string | null; venue?: string }): Promise<boolean> {
   const db = getAdminDb();
+  const { data: existing, error: existingError } = await db.from("tracked_markets").select("active").eq("launch_id", launchId).maybeSingle();
+  if (existingError) throw existingError;
+  if (existing?.active) return true;
   let source = input;
   if (!source) {
-    const { data, error } = await db.from("launches").select("mint,market_address,quote_mint,creator_wallet,launch_signature").eq("id", launchId).single();
+    const { data, error } = await db.from("launches").select("venue,mint,market_address,quote_mint,creator_wallet,launch_signature").eq("id", launchId).single();
     if (error) throw error;
     if (!data.mint || !data.market_address) throw new Error("Launch mint and market are not available");
-    source = { mint: data.mint, pool: data.market_address, quoteMint: data.quote_mint, creator: data.creator_wallet, launchSignature: data.launch_signature };
+    source = { mint: data.mint, pool: data.market_address, quoteMint: data.quote_mint, creator: data.creator_wallet, launchSignature: data.launch_signature, venue: data.venue };
   }
   await db.from("launches").update({ tracker_status: "registering", tracker_error: null }).eq("id", launchId);
   try {
-    const market = await inspectLaunchLabMarket(source);
+    const market = await (source.venue === "pumpfun" ? inspectPumpMarket(source) : inspectLaunchLabMarket(source));
     await addHeliusWebhookAddresses([source.mint, source.pool]);
     const { error: marketError } = await db.from("tracked_markets").upsert({
-      launch_id: launchId, venue: "stonkfun", market_address: source.pool,
+      launch_id: launchId, venue: source.venue ?? "stonkfun", market_address: source.pool,
       base_mint: source.mint, quote_mint: source.quoteMint, active: true,
       base_decimals: market.baseDecimals, quote_decimals: market.quoteDecimals,
       program_id: market.programId, launch_slot: market.launchSlot,
@@ -112,7 +116,7 @@ export async function registerLaunchTracker(launchId: string, input?: { mint: st
   } catch (error) {
     const message = error instanceof Error ? error.message : "Tracker registration failed";
     await db.from("tracked_markets").upsert({
-      launch_id: launchId, venue: "stonkfun", market_address: source.pool,
+      launch_id: launchId, venue: source.venue ?? "stonkfun", market_address: source.pool,
       base_mint: source.mint, quote_mint: source.quoteMint, active: false, tracker_error: message,
     }, { onConflict: "launch_id" });
     await db.from("launches").update({ tracker_status: "failed", tracker_error: message }).eq("id", launchId);

@@ -7,7 +7,7 @@ describe("Supabase migrations", () => {
   it("applies cleanly and enforces launch-scoped funding keys", async () => {
     const db = new PGlite();
     await db.exec("create role service_role; create role anon; create role authenticated;");
-    for (const file of ["202609130001_topblast_multilaunch.sql", "202609140001_audit_hardening.sql", "202609140002_operational_pipeline.sql"]) {
+    for (const file of ["202609130001_topblast_multilaunch.sql", "202609140001_audit_hardening.sql", "202609140002_operational_pipeline.sql", "202609150001_pumpfun.sql"]) {
       const sql = (await readFile(join(process.cwd(), "supabase", "migrations", file), "utf8")).replace("create extension if not exists pgcrypto;", "");
       await db.exec(sql);
     }
@@ -17,7 +17,7 @@ describe("Supabase migrations", () => {
     expect(columns.rows.map((row) => row.column_name)).toContain("launch_id");
     const a = "00000000-0000-4000-8000-00000000000a", b = "00000000-0000-4000-8000-00000000000b";
     for (const [id, mint, market] of [[a, "mint-a", "market-a"], [b, "mint-b", "market-b"]]) {
-      await db.query("insert into public.launches(id,venue,creator_wallet,name,symbol,image_url,quote_mint,quote_symbol,mint,market_address,signed_quote_hash,status) values($1,'stonkfun','creator','Token','TOK','logo','stonk','STONK',$2,$3,'hash','active')", [id, mint, market]);
+      await db.query("insert into public.launches(id,venue,creator_wallet,name,symbol,image_url,quote_mint,quote_symbol,mint,market_address,signed_quote_hash,status) values($1::uuid,case when $1::uuid::text like '%00b' then 'pumpfun' else 'stonkfun' end,'creator','Token','TOK','logo','stonk','STONK',$2,$3,'hash','active')", [id, mint, market]);
       await db.query("insert into public.launch_configs(launch_id,fee_tier,topblast_percent,creator_percent,protocol_percent,reward_asset_mint,treasury_address) values($1,'1%',70,20,10,'stonk','treasury')", [id]);
       await db.query("insert into public.funding_intents(id,launch_id,funder_wallet,asset_mint,gross_amount_atoms,reward_amount_atoms,creator_amount_atoms,protocol_amount_atoms,reward_treasury,protocol_treasury,memo,unsigned_transaction,unsigned_message_hash,last_valid_block_height,status,signature,expires_at) values(gen_random_uuid(),$1,'creator','stonk',100,70,20,10,'treasury','protocol',$2,'wire','hash',99,'submitted',$3,now()+interval '1 minute')", [id, `memo-${id}`, `signature-${id}`]);
     }

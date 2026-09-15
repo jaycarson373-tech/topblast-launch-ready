@@ -14,6 +14,8 @@ export interface FeeAllocationPolicy {
 }
 
 export interface LaunchDraft {
+  venue?: "stonkfun" | "pumpfun";
+  pumpMint?: string;
   creatorWallet: string;
   name: string;
   symbol: string;
@@ -44,7 +46,7 @@ export interface TrackedMarket {
   baseMint: string;
   quoteMint: string;
   marketAddress: string;
-  venue: "stonkfun";
+  venue: "stonkfun" | "pumpfun";
   tokenDecimals: number;
   quoteDecimals: number;
 }

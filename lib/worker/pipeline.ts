@@ -7,19 +7,20 @@ import { observeLaunchLabPrice } from "@/lib/solana/launchlab";
 import { verifyFinalizedSignedTransaction } from "@/lib/solana/checked-transfers";
 import { solanaRpc } from "@/lib/solana/rpc";
 import type { WalletPosition } from "@/lib/types";
+import { decodeFinalizedPumpTransaction } from "@/lib/indexer/pumpfun-decoder";
+import { observePumpPrice } from "@/lib/solana/pumpfun";
+import { applyPositionEvent, emptyPosition, type PositionEvent } from "@/lib/rewards/position";
+import { calculateLossWeightedRewards } from "@/lib/rewards/calculator";
+import type { RewardSnapshotPosition } from "@/lib/types";
 
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 interface MarketRow {
+  venue?: string;
   launch_id: string; base_mint: string; quote_mint: string; market_address: string; base_decimals: number; quote_decimals: number;
   launch_slot: number | string; last_indexed_slot: number | string; creator_address: string; authority_address: string; config_address: string;
   platform_config_address: string; base_vault: string; quote_vault: string; history_complete: boolean; price_status: string;
   last_indexed_blockhash?: string | null; base_token_program: string; quote_token_program: string;
   launch_signature?: string | null;
-}
-interface WalletRow {
-  launch_id: string; wallet: string; verified_purchased_raw: string; verified_remaining_raw: string; balance_raw: string;
-  cost_basis_quote_atoms: string; previous_rewards_quote_atoms: string; last_activity_slot: string;
-  last_sell_slot: string | null; last_outgoing_transfer_slot: string | null;
 }
 async function claim(db: SupabaseClient, type: string, id: string, owner: string) {
   const { data, error } = await db.rpc("claim_worker_lease", { p_resource_type: type, p_resource_id: id, p_owner_id: owner, p_seconds: 90 });
@@ -39,9 +40,9 @@ export async function reconcileMarket(db: SupabaseClient, row: MarketRow, owner:
       const block = await solanaRpc<{ blockhash: string; previousBlockhash: string; blockTime: number | null; transactions: FinalizedBlockTransaction[] } | null>("getBlock", [slot, { commitment: "finalized", encoding: "jsonParsed", transactionDetails: "full", rewards: false, maxSupportedTransactionVersion: 0 }]);
       if (!block) throw new Error(`Finalized block ${slot} is unavailable`);
       if (blockhash && block.previousBlockhash !== blockhash) throw new Error(`Finalized chain continuity failed at slot ${slot}`);
-      for (const transaction of block.transactions) {
+      for (const [transactionIndex, transaction] of block.transactions.entries()) {
         if (transaction.transaction.signatures[0] === row.launch_signature) continue;
-        const decoded = decodeFinalizedLaunchLabTransaction(transaction, {
+        const decoded = (row.venue === "pumpfun" ? decodeFinalizedPumpTransaction : decodeFinalizedLaunchLabTransaction)(transaction, {
           launchId: row.launch_id, marketAddress: row.market_address, baseMint: row.base_mint, quoteMint: row.quote_mint,
           authorityAddress: row.authority_address, configAddress: row.config_address, platformConfigAddress: row.platform_config_address,
           baseVault: row.base_vault, quoteVault: row.quote_vault, baseTokenProgram: row.base_token_program,
@@ -50,7 +51,7 @@ export async function reconcileMarket(db: SupabaseClient, row: MarketRow, owner:
         for (let index = 0; index < decoded.events.length; index += 1) {
           const event = decoded.events[index];
           const { error } = await db.rpc("apply_wallet_activity", {
-            p_launch_id: row.launch_id, p_wallet: event.wallet, p_signature: decoded.signature, p_event_index: index,
+            p_launch_id: row.launch_id, p_wallet: event.wallet, p_signature: decoded.signature, p_event_index: activityOrdinal(transactionIndex, index),
             p_kind: event.kind, p_token_raw: event.tokenRaw.toString(), p_quote_atoms: event.kind === "verified_buy" ? event.quoteAtoms.toString() : null, p_slot: slot,
           });
           if (error) throw error;
@@ -61,7 +62,7 @@ export async function reconcileMarket(db: SupabaseClient, row: MarketRow, owner:
     cursor = end;
     await db.from("chain_event_inbox").update({ status: "confirmed", processed_at: new Date().toISOString(), last_error: null }).eq("launch_id", row.launch_id).lte("observed_slot", cursor).in("status", ["pending", "processing", "failed"]);
   }
-  const observation = await observeLaunchLabPrice({
+  const observation = await (row.venue === "pumpfun" ? observePumpPrice : observeLaunchLabPrice)({
     launchId: row.launch_id, marketAddress: row.market_address, baseMint: row.base_mint, quoteMint: row.quote_mint,
     creatorAddress: row.creator_address, configAddress: row.config_address, platformConfigAddress: row.platform_config_address,
     baseVault: row.base_vault, quoteVault: row.quote_vault, tokenDecimals: row.base_decimals,
@@ -69,7 +70,7 @@ export async function reconcileMarket(db: SupabaseClient, row: MarketRow, owner:
   });
   await db.from("price_observations").upsert({
     launch_id: row.launch_id, market_address: row.market_address, slot: observation.slot, block_time: observation.blockTime,
-    price_quote_atoms_per_token: observation.priceQuoteAtomsPerToken.toString(), source: "launchlab_pool",
+    price_quote_atoms_per_token: observation.priceQuoteAtomsPerToken.toString(), source: row.venue === "pumpfun" ? "pump_curve" : "launchlab_pool",
     payload_hash: hash({ slot: observation.slot, price: observation.priceQuoteAtomsPerToken.toString() }),
   }, { onConflict: "launch_id,slot,source", ignoreDuplicates: true });
   await db.from("tracked_markets").update({
@@ -78,18 +79,38 @@ export async function reconcileMarket(db: SupabaseClient, row: MarketRow, owner:
   }).eq("launch_id", row.launch_id);
 }
 
-function walletPosition(row: WalletRow): WalletPosition {
-  return {
-    launchId: row.launch_id, wallet: row.wallet, verifiedPurchasedRaw: BigInt(row.verified_purchased_raw),
-    verifiedRemainingRaw: BigInt(row.verified_remaining_raw), balanceRaw: BigInt(row.balance_raw),
-    costBasisQuoteAtoms: BigInt(row.cost_basis_quote_atoms), previousRewardsQuoteAtoms: BigInt(row.previous_rewards_quote_atoms),
-    lastActivitySlot: BigInt(row.last_activity_slot), lastSellSlot: row.last_sell_slot === null ? null : BigInt(row.last_sell_slot),
-    lastOutgoingTransferSlot: row.last_outgoing_transfer_slot === null ? null : BigInt(row.last_outgoing_transfer_slot),
-  };
+export function activityOrdinal(transactionIndex: number, eventIndex: number) {
+  if (!Number.isInteger(transactionIndex) || transactionIndex < 0 || transactionIndex >= 32768 || !Number.isInteger(eventIndex) || eventIndex < 0 || eventIndex >= 65536) throw new Error("Block activity order exceeds supported integer range");
+  return transactionIndex * 65536 + eventIndex;
+}
+
+async function positionsAtSnapshot(db: SupabaseClient, launchId: string, snapshotSlot: string | number) {
+  const positions = new Map<string, WalletPosition>();
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await db.from("wallet_activity").select("wallet,kind,token_raw,quote_atoms,slot")
+      .eq("launch_id", launchId).lte("slot", snapshotSlot).order("slot").order("event_index").order("signature").order("wallet").range(offset, offset + 999);
+    if (error) throw error;
+    for (const item of data ?? []) {
+      const event = { launchId, wallet: item.wallet, kind: item.kind, tokenRaw: BigInt(item.token_raw), slot: BigInt(item.slot), ...(item.kind === "verified_buy" ? { quoteAtoms: BigInt(item.quote_atoms) } : {}) } as PositionEvent;
+      positions.set(item.wallet, applyPositionEvent(positions.get(item.wallet) ?? emptyPosition(launchId, item.wallet), event));
+    }
+    if (!data || data.length < 1000) break;
+  }
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await db.from("reward_distributions").select("wallet,amount_atoms,reward_epochs!reward_distributions_epoch_id_fkey!inner(snapshot_slot)")
+      .eq("launch_id", launchId).eq("status", "confirmed").lt("reward_epochs.snapshot_slot", snapshotSlot).order("id").range(offset, offset + 999);
+    if (error) throw error;
+    for (const item of data ?? []) { const position = positions.get(item.wallet); if (position) position.previousRewardsQuoteAtoms += BigInt(item.amount_atoms); }
+    if (!data || data.length < 1000) break;
+  }
+  return [...positions.values()];
 }
 
 export async function planEpoch(db: SupabaseClient, row: MarketRow, owner: string) {
   if (!row.history_complete || row.price_status !== "fresh" || !await claim(db, "epoch", row.launch_id, owner)) return;
+  const { data: launch, error: launchError } = await db.from("launches").select("status").eq("id", row.launch_id).single();
+  if (launchError) throw launchError;
+  if (launch.status !== "active") return;
   const { data: active } = await db.from("reward_epochs").select("*").eq("launch_id", row.launch_id).in("status", ["pending", "running"]).maybeSingle();
   let epoch = active;
   if (!epoch) {
@@ -108,6 +129,7 @@ export async function planEpoch(db: SupabaseClient, row: MarketRow, owner: strin
       startTime, endTime, maxGapSeconds: Number(process.env.MAX_PRICE_GAP_SECONDS ?? 180),
     });
     if (Date.now() - new Date(observations!.at(-1)!.block_time).getTime() > Number(process.env.MAX_PRICE_AGE_SECONDS ?? 180) * 1000) throw new Error("Price is stale; epoch not payable");
+    if (canonical.endSlot > Number(row.last_indexed_slot)) return;
     const { data: id, error } = await db.rpc("reserve_epoch_budget", {
       p_launch_id: row.launch_id, p_start_slot: previous?.snapshot_slot ? Number(previous.snapshot_slot) + 1 : canonical.startSlot,
       p_snapshot_slot: canonical.endSlot, p_start_time: startTime.toISOString(),
@@ -119,17 +141,27 @@ export async function planEpoch(db: SupabaseClient, row: MarketRow, owner: strin
     if (result.error) throw result.error;
     epoch = result.data;
   }
-  const [{ data: positions, error: positionsError }, { data: market, error: marketError }] = await Promise.all([
-    db.from("wallet_positions").select("*").eq("launch_id", row.launch_id),
-    db.from("tracked_markets").select("base_decimals").eq("launch_id", row.launch_id).single(),
-  ]);
-  if (positionsError) throw positionsError;
+  if (Number(epoch.snapshot_slot) > Number(row.last_indexed_slot)) return;
+  const positions = await positionsAtSnapshot(db, row.launch_id, epoch.snapshot_slot);
+  const { data: market, error: marketError } = await db.from("tracked_markets").select("base_decimals").eq("launch_id", row.launch_id).single();
   if (marketError) throw marketError;
-  const plan = buildEpochPlan({
+  let plan = buildEpochPlan({
     launchId: row.launch_id, epochId: epoch.id, startSlot: BigInt(epoch.start_slot), snapshotSlot: BigInt(epoch.snapshot_slot),
     fundedBudgetQuoteAtoms: BigInt(epoch.funded_budget_atoms), currentPriceQuoteAtomsPerToken: BigInt(epoch.reference_price_quote_atoms),
-    tokenDecimals: market.base_decimals, positions: (positions ?? []).map((item) => walletPosition(item as WalletRow)),
+    tokenDecimals: market.base_decimals, positions,
   });
+  // A retry must use the published snapshot, including after partial payouts.
+  const savedSnapshots: RewardSnapshotPosition[] = [];
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await db.from("reward_snapshots").select("*").eq("launch_id", row.launch_id).eq("epoch_id", epoch.id).order("wallet").range(offset, offset + 999);
+    if (error) throw error;
+    for (const item of data ?? []) savedSnapshots.push({ launchId: row.launch_id, wallet: item.wallet, status: item.status, averageEntryQuoteAtoms: BigInt(item.average_entry_quote_atoms), currentValueQuoteAtoms: BigInt(item.current_value_quote_atoms), eligibleUnitsRaw: BigInt(item.eligible_units_raw), eligibleLossQuoteAtoms: BigInt(item.eligible_loss_quote_atoms), previousRewardsQuoteAtoms: BigInt(item.previous_rewards_quote_atoms) });
+    if (!data || data.length < 1000) break;
+  }
+  if (savedSnapshots.length) {
+    const allocations = calculateLossWeightedRewards({ launchId: row.launch_id, epochId: epoch.id, fundedBudgetQuoteAtoms: BigInt(epoch.funded_budget_atoms), snapshots: savedSnapshots });
+    plan = { ...plan, snapshots: savedSnapshots, allocations, distributedQuoteAtoms: allocations.reduce((sum, item) => sum + item.amountQuoteAtoms, 0n) };
+  }
   const allocationHash = hash(plan.allocations.map((item) => [item.wallet, item.amountQuoteAtoms.toString()]));
   const { count: snapshotCount } = await db.from("reward_snapshots").select("id", { count: "exact", head: true }).eq("epoch_id", epoch.id);
   if (!snapshotCount && plan.snapshots.length) {

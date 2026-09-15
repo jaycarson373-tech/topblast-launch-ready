@@ -11,6 +11,9 @@ export async function preparePayoutBatch(batchId: string) {
   const db = getAdminDb();
   const { data: batch, error } = await db.from("payout_batches").select("*").eq("id", batchId).single();
   if (error) throw error;
+  const { data: launch, error: launchError } = await db.from("launches").select("status").eq("id", batch.launch_id).single();
+  if (launchError) throw launchError;
+  if (launch.status !== "active") throw new Error("This launch is paused; payout preparation is locked");
   if (batch.status === "prepared") return batch;
   if (batch.status !== "planned") throw new Error(`Payout batch is ${batch.status}`);
   const treasury = process.env.TOPBLAST_TREASURY_ADDRESS;
@@ -40,6 +43,9 @@ export async function submitPayoutBatch(batchId: string, signedTransaction: stri
   const { data: batch, error } = await db.from("payout_batches").select("*").eq("id", batchId).single();
   if (error) throw error;
   if (batch.status === "confirmed") return reconcilePayoutBatch(batchId);
+  const { data: launch, error: launchError } = await db.from("launches").select("status").eq("id", batch.launch_id).single();
+  if (launchError) throw launchError;
+  if (launch.status !== "active") throw new Error("This launch is paused; payout submission is locked");
   if (batch.status !== "prepared" && !["submitted", "uncertain"].includes(batch.status)) throw new Error(`Payout batch is ${batch.status}`);
   const treasury = process.env.TOPBLAST_TREASURY_ADDRESS;
   if (!treasury) throw new Error("TOPBLAST_TREASURY_ADDRESS is required");

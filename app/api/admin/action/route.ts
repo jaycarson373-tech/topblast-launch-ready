@@ -17,13 +17,14 @@ export async function GET(request: Request) {
     db.from("tracked_markets").select("launch_id,last_indexed_slot,updated_at,tracker_error,history_complete,price_status").eq("active", true).order("last_indexed_slot"),
     db.from("reward_epochs").select("id", { count: "exact", head: true }).eq("status", "failed"),
     db.from("payout_batches").select("id", { count: "exact", head: true }).in("status", ["failed", "uncertain"]),
-    db.from("fee_events").select("amount_atoms").in("status", ["detected", "confirmed"]),
+    db.from("fee_events").select("asset_mint,amount_atoms").in("status", ["detected", "confirmed"]),
     db.from("system_config").select("key,value"),
-    db.from("launch_funding_balances").select("available_atoms,reserved_atoms,submitted_atoms,paid_atoms"),
+    db.from("launch_funding_balances").select("asset_mint,available_atoms,reserved_atoms,submitted_atoms,paid_atoms"),
     db.from("chain_event_inbox").select("id", { count: "exact", head: true }).eq("status", "failed"),
     db.from("payout_batches").select("id,launch_id,epoch_id,sequence,amount_atoms,status,manifest_hash").in("status", ["planned", "prepared", "submitted", "uncertain"]).order("created_at"),
   ]);
-  const unclaimed = (fees.data ?? []).reduce((sum, item) => sum + BigInt(item.amount_atoms), 0n);
+  const observedFees: Record<string, string> = {};
+  for (const item of fees.data ?? []) observedFees[item.asset_mint] = (BigInt(observedFees[item.asset_mint] ?? 0) + BigInt(item.amount_atoms)).toString();
   const treasuryAddress = process.env.TOPBLAST_TREASURY_ADDRESS;
   const rewardMint = process.env.STONK_QUOTE_MINT;
   let treasuryBalances: unknown = "NOT CONFIGURED";
@@ -35,20 +36,28 @@ export async function GET(request: Request) {
   try { finalizedSlot = await solanaRpc<number>("getSlot", [{ commitment: "finalized" }]); } catch { /* reported as unavailable */ }
   const rows = markets.data ?? [];
   const lastIndexed = rows.length ? Math.min(...rows.map((item) => Number(item.last_indexed_slot))) : null;
-  const fundingTotals = (balances.data ?? []).reduce((sum, item) => ({
-    available: sum.available + BigInt(item.available_atoms), reserved: sum.reserved + BigInt(item.reserved_atoms),
-    submitted: sum.submitted + BigInt(item.submitted_atoms), paid: sum.paid + BigInt(item.paid_atoms),
-  }), { available: 0n, reserved: 0n, submitted: 0n, paid: 0n });
+  const fundingTotals: Record<string, Record<string, string>> = {};
+  for (const item of balances.data ?? []) {
+    const amounts = fundingTotals[item.asset_mint] ??= { available: "0", reserved: "0", submitted: "0", paid: "0" };
+    for (const name of ["available", "reserved", "submitted", "paid"] as const) amounts[name] = (BigInt(amounts[name]) + BigInt(item[`${name}_atoms`])).toString();
+  }
   const heartbeat = config.data?.find((item) => item.key === "worker_heartbeat")?.value as { at?: string } | undefined;
   const workerFresh = Boolean(heartbeat?.at && Date.now() - new Date(heartbeat.at).getTime() < 180_000);
   const trackerHealth = !rows.length ? "NO MARKETS" : rows.some((item) => item.tracker_error || item.price_status === "failed") ? "DEGRADED" : rows.every((item) => item.history_complete) ? "CAUGHT UP" : "BACKFILLING";
-  return NextResponse.json({ activeLaunches: launches.count ?? 0, trackerHealth, workerFresh, workerHeartbeat: heartbeat ?? null, lastIndexedBlock: lastIndexed, finalizedSlot, indexingLag: finalizedSlot !== null && lastIndexed !== null ? finalizedSlot - lastIndexed : null, failedEpochs: failedEpochs.count ?? 0, failedPayouts: failedPayouts.count ?? 0, reconciliationProblems: inboxFailures.count ?? 0, observedCreatorFeesAtoms: unclaimed.toString(), fundingBalances: Object.fromEntries(Object.entries(fundingTotals).map(([name, value]) => [name, value.toString()])), treasuryBalances, payoutMode: "wallet_approved", dryRun: process.env.DRY_RUN !== "false", pendingApprovalBatches: approvals.data ?? [], config: config.data ?? [] });
+  return NextResponse.json({ activeLaunches: launches.count ?? 0, trackerHealth, workerFresh, workerHeartbeat: heartbeat ?? null, lastIndexedBlock: lastIndexed, finalizedSlot, indexingLag: finalizedSlot !== null && lastIndexed !== null ? finalizedSlot - lastIndexed : null, failedEpochs: failedEpochs.count ?? 0, failedPayouts: failedPayouts.count ?? 0, reconciliationProblems: inboxFailures.count ?? 0, observedCreatorFeesByAsset: observedFees, fundingBalances: fundingTotals, treasuryBalances, payoutMode: "wallet_approved", dryRun: process.env.DRY_RUN !== "false", pendingApprovalBatches: approvals.data ?? [], config: config.data ?? [] });
 }
 
 export async function POST(request: Request) {
   if (!authorized(request)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = await request.json() as { action?: string; launchId?: string; epochId?: string };
   const db = getAdminDb();
+  if (body.action === "resume_engine") {
+    const { data: heartbeat, error } = await db.from("system_config").select("value").eq("key", "worker_heartbeat").single();
+    if (error || !heartbeat?.value?.at || Date.now() - new Date(heartbeat.value.at).getTime() > 180_000) return NextResponse.json({ error: "A healthy worker is required" }, { status: 409 });
+    const result = await db.from("system_config").upsert({ key: "reward_engine_paused", value: false, updated_at: new Date().toISOString() });
+    if (result.error) return NextResponse.json({ error: result.error.message }, { status: 500 });
+    return NextResponse.json({ ok: true, dryRun: process.env.DRY_RUN !== "false", payoutMode: "wallet_approved" });
+  }
   if (body.action === "pause_engine") {
     const { error } = await db.from("system_config").upsert({ key: "reward_engine_paused", value: true, updated_at: new Date().toISOString() });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });

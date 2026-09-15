@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ColorType, createChart, LineSeries, type IChartApi, type UTCTimestamp } from "lightweight-charts";
 
-export function PriceChart({ points, decimals }: { points: Array<{ block_time: string; price_quote_atoms_per_token: string }>; decimals: number }) {
+export function PriceChart({ points, decimals, quoteSymbol = "STONK" }: { quoteSymbol?: string; points: Array<{ block_time: string; price_quote_atoms_per_token: string }>; decimals: number }) {
   const host = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const [range, setRange] = useState("ALL");
@@ -35,5 +35,5 @@ export function PriceChart({ points, decimals }: { points: Array<{ block_time: s
     chartRef.current.timeScale().setVisibleRange({ from: (to - seconds) as UTCTimestamp, to });
   }
   if (!points.length) return <div className="chart-empty">Price history becomes available after the finalized tracker records the market.</div>;
-  return <section className="chart-panel" aria-label="Live finalized STONK price chart"><div className="chart-head"><div><div className="section-label">Finalized market price</div><h3>Token / STONK</h3></div><div className="chart-ranges" aria-label="Chart timeframes">{["1H", "1D", "7D", "ALL"].map((item) => <button type="button" className={range === item ? "active" : ""} key={item} onClick={() => applyRange(item)}>{item}</button>)}</div></div><div ref={host} className="chart-host" /><p className="notice">Drag to pan. Scroll or pinch to zoom. Data comes from finalized LaunchLab pool observations.</p></section>;
+  return <section className="chart-panel" aria-label={`Finalized ${quoteSymbol} price chart`}><div className="chart-head"><div><div className="section-label">Finalized market price</div><h3>Token / {quoteSymbol}</h3></div><div className="chart-ranges" aria-label="Chart timeframes">{["1H", "1D", "7D", "ALL"].map((item) => <button type="button" className={range === item ? "active" : ""} key={item} onClick={() => applyRange(item)}>{item}</button>)}</div></div><div ref={host} className="chart-host" /><p className="notice">Drag to pan. Scroll or pinch to zoom. Data comes from finalized, verified venue account observations.</p></section>;
 }

@@ -4,7 +4,8 @@ import { randomUUID } from "node:crypto";
 import { reconcileLaunchFunding } from "../lib/funding/service";
 import { registerLaunchTracker } from "../lib/db/launch-repository";
 import { planEpoch, reconcileMarket, reconcilePayoutBatches } from "../lib/worker/pipeline";
-import { StonkFunAdapter } from "../lib/venue/stonkfun-adapter";
+import { launchVenue } from "../lib/venue/registry";
+import { submitBoundLaunch } from "../lib/venue/launch-submission-service";
 
 const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -12,7 +13,6 @@ const configured = Boolean(url && key);
 const db = url && key ? createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
 const dryRun = process.env.DRY_RUN !== "false";
 const owner = `${process.env.RAILWAY_REPLICA_ID ?? "local"}:${process.pid}:${randomUUID()}`;
-const venue = new StonkFunAdapter();
 const port = Number(process.env.PORT ?? 0);
 let lastCycleAt: string | null = null;
 let lastCycleError: string | null = null;
@@ -44,6 +44,12 @@ async function runCycle() {
   });
   if (heartbeatError) throw heartbeatError;
 
+  const { data: pendingLaunches } = await db.from("launches").select("id").eq("status", "processing").not("payment_signature", "is", null);
+  for (const launch of pendingLaunches ?? []) {
+    try { await submitBoundLaunch(launch.id); }
+    catch (error) { process.stderr.write(`${launch.id}: launch recovery pending: ${error instanceof Error ? error.message : "unknown error"}\n`); }
+  }
+
   const { data: recoverableLaunches } = await db.from("launches").select("id").eq("status", "active").eq("tracker_status", "failed");
   for (const launch of recoverableLaunches ?? []) {
     try { await registerLaunchTracker(launch.id); }
@@ -55,7 +61,7 @@ async function runCycle() {
   for (const market of markets ?? []) {
     try {
       await reconcileMarket(db, market, owner);
-      const venueMarket = await venue.getMarketData(market.base_mint, market.market_address);
+      const venueMarket = await launchVenue(market.venue).getMarketData(market.base_mint, market.market_address);
       await db.from("launches").update({ price_usd: venueMarket.priceUsd, market_cap_usd: venueMarket.marketCapUsd, volume_24h_usd: venueMarket.volume24hUsd, liquidity_usd: venueMarket.liquidityUsd, updated_at: new Date().toISOString() }).eq("id", market.launch_id);
     }
     catch (error) {

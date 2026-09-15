@@ -16,7 +16,7 @@ interface FundingReview {
 const decode = (value: string) => Uint8Array.from(atob(value), (item) => item.charCodeAt(0));
 const encode = (value: Uint8Array) => btoa(String.fromCharCode(...value));
 
-export function FundingPanel({ launchId, creatorWallet }: { launchId: string; creatorWallet: string }) {
+export function FundingPanel({ launchId, creatorWallet, venue = "stonkfun" }: { launchId: string; creatorWallet: string; venue?: string }) {
   const [wallets, setWallets] = useState<readonly Wallet[]>([]);
   const [walletName, setWalletName] = useState("");
   const [wallet, setWallet] = useState<Wallet | null>(null);
@@ -101,9 +101,10 @@ export function FundingPanel({ launchId, creatorWallet }: { launchId: string; cr
 
   return <div className="funding-card">
     <div className="section-label">Creator deposit funding</div>
-    <p className="notice">StonkFun creator fees go to your creator wallet. Deposit a declared gross fee amount here. The fixed launch allocation sends the reward and protocol portions; your creator portion remains in your wallet.</p>
+    {venue === "pumpfun" && <p className="notice">SOL is wrapped into WSOL in the deposit transaction. Rewards are paid in WSOL. No swap is involved. <a href="https://pump.fun" target="_blank" rel="noreferrer">Claim fees on Pump.fun</a></p>}
+    <p className="notice">Claim venue fees to your creator wallet first. Deposit a declared gross fee amount here. The fixed launch allocation sends the reward and protocol portions; your creator portion remains in your wallet.</p>
     {!account && <div className="lookup"><select aria-label="Solana wallet" value={walletName} onChange={(event) => setWalletName(event.target.value)}>{wallets.map((item) => <option key={item.name}>{item.name}</option>)}</select><button className="button button-secondary" type="button" onClick={() => void connect().catch((error) => setMessage(error.message))}>Connect creator</button></div>}
-    {account && !review && !pending && <div className="lookup"><input aria-label="Gross STONK creator fee amount" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="Gross STONK amount" /><button className="button" type="button" disabled={busy} onClick={prepare}>Review funding</button></div>}
+    {account && !review && !pending && <div className="lookup"><input aria-label={venue === "pumpfun" ? "Gross SOL funding amount" : "Gross STONK funding amount"} inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder={venue === "pumpfun" ? "Gross SOL amount" : "Gross STONK amount"} /><button className="button" type="button" disabled={busy} onClick={prepare}>Review funding</button></div>}
     {review && !pending && <div className="transaction-review"><strong>Review exact allocation</strong><p className="notice">Gross: {review.grossAmountAtoms} atoms. Reward treasury: {review.rewardAmountAtoms}. Creator retained: {review.creatorAmountAtoms}. Protocol: {review.protocolAmountAtoms}. Mint: <span className="mono">{review.assetMint}</span>. Reward recipient: <span className="mono">{review.rewardTreasury}</span>.</p><button className="button" type="button" disabled={busy} onClick={sign}>Approve in wallet</button> <button className="button button-secondary" type="button" disabled={busy} onClick={() => setReview(null)}>Cancel</button></div>}
     {pending && <div role="status"><p className="notice">Funding receipt: <span className="mono">{pending}</span>. Recover this exact transaction before preparing another.</p><button className="button button-secondary" type="button" disabled={busy} onClick={recover}>Check funding finality</button></div>}
     {message && <div className={message.includes("confirmed") ? "success" : "notice"}>{message}</div>}

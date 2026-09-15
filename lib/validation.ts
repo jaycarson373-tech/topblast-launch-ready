@@ -17,6 +17,8 @@ export const allocationSchema = z
   });
 
 export const launchDraftSchema = z.object({
+  venue: z.enum(["stonkfun", "pumpfun"]).default("stonkfun"),
+  pumpMint: z.string().refine((value) => { try { address(value); return true; } catch { return false; } }, "Invalid mint address").optional(),
   creatorWallet: z.string().refine((value) => {
     try { address(value); return true; } catch { return false; }
   }, "Invalid Solana wallet"),

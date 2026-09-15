@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createLaunchDraft } from "@/lib/db/launch-repository";
-import { StonkFunAdapter, StonkFunApiError } from "@/lib/venue/stonkfun-adapter";
+import { StonkFunApiError } from "@/lib/venue/stonkfun-adapter";
+import { launchVenue } from "@/lib/venue/registry";
+import { PUMP_SOL_MINT } from "@/lib/solana/pumpfun";
 import { launchDraftSchema, validateMinimumReward } from "@/lib/validation";
 import { assertLaunchReady } from "@/lib/readiness";
 import { getTreasuryBalance } from "@/lib/solana/rpc";
@@ -12,10 +14,12 @@ export async function POST(request: Request) {
     assertLaunchReady();
     const draft = launchDraftSchema.parse(await request.json());
     validateMinimumReward(draft.allocation.topblastPercent);
-    const expectedQuote = process.env.STONK_QUOTE_MINT ?? "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx";
-    if (draft.quoteMint !== expectedQuote) return NextResponse.json({ error: "MVP launches must use the STONK pair" }, { status: 400 });
+    if (draft.venue === "pumpfun" && process.env.PUMPFUN_ENABLED !== "true") throw new Error("Pump.fun acceptance is pending. Creation is not enabled yet.");
+    const expectedQuote = draft.venue === "pumpfun" ? PUMP_SOL_MINT : process.env.STONK_QUOTE_MINT ?? "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx";
+    if (draft.quoteMint !== expectedQuote) return NextResponse.json({ error: "Unsupported quote mint for the selected venue" }, { status: 400 });
+    draft.quoteSymbol = draft.venue === "pumpfun" ? "SOL" : "STONK";
     await getTreasuryBalance(process.env.TOPBLAST_TREASURY_ADDRESS!);
-    const adapter = new StonkFunAdapter();
+    const adapter = launchVenue(draft.venue);
     const pair = await adapter.getPair(draft.quoteMint);
     if (!pair?.launchable || pair.launchLabReady === false) {
       return NextResponse.json({ error: "The STONK pair is not currently launchable on StonkFun" }, { status: 503 });

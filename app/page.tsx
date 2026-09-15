@@ -18,14 +18,14 @@ export default function Home() {
               <Link className="button" href="/launch">Launch token</Link>
               <Link className="button button-secondary" href="/explore">Explore launches</Link>
             </div>
-            <p className="microcopy">Launch through StonkFun. Give holders a reason to stay.</p>
+            <p className="microcopy">StonkFun or Pump.fun. Your launch, with TopBlast on top.</p>
           </div>
           <BlastExample />
         </div>
       </section>
       <section className="positioning">
         <div className="shell position-grid">
-          <div><span>STONKFUN</span><strong>Launch + liquidity infrastructure.</strong></div>
+          <div><span>STONKFUN + PUMP.FUN</span><strong>Launch + liquidity infrastructure.</strong></div>
           <div><span>OUR PLATFORM</span><strong>TopBlast reward infrastructure.</strong></div>
           <div><span>CREATOR</span><strong>Sets the reward allocation.</strong></div>
           <div><span>HOLDER</span><strong>Must qualify at each snapshot.</strong></div>
@@ -44,7 +44,7 @@ export default function Home() {
         <div className="eyebrow">WHERE REWARDS COME FROM</div>
         <h2>FUNDED FIRST.<br />REWARDED SECOND.</h2>
         <p>Creators choose how deposited creator-fee revenue is allocated. A 70 / 20 / 10 setting means 70% for holder rewards, 20% for the creator, and 10% for the protocol.</p>
-        <p>StonkFun sends creator fees to the creator. The creator explicitly deposits the configured reward and protocol portions through a verified launch-scoped transaction. A percentage setting alone never counts as funding.</p>
+        <p>Creators receive or claim venue fees in their own wallet. The creator explicitly deposits the configured reward and protocol portions through a verified launch-scoped transaction. A percentage setting alone never counts as funding.</p>
         <Link className="button button-secondary" href="/launch">Review launch setup</Link>
       </section>
     </main>

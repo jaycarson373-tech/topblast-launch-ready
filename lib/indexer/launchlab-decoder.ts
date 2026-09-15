@@ -26,7 +26,7 @@ interface Balance { mint: string; owner: string; program: string; pre: bigint; p
 interface Transfer { source: string; destination: string; from: string; to: string; mint: string; amount: bigint; sequence: number; context: SwapContext | null }
 interface SwapContext { side: "buy" | "sell"; payer: string; input: string; output: string; transfers: Transfer[] }
 
-function decode58(value: string) {
+export function decode58(value: string) {
   let number = 0n;
   for (const character of value) { const digit = ALPHABET.indexOf(character); if (digit < 0) throw new Error("Invalid base58 instruction data"); number = number * 58n + BigInt(digit); }
   let hex = number.toString(16); if (hex.length % 2) hex = `0${hex}`;

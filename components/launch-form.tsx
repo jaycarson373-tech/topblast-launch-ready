@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Keypair, Transaction } from "@solana/web3.js";
 import { paymentSignatureFromTransaction } from "@/lib/solana/transaction-signature";
 import { getWallets } from "@wallet-standard/app";
 
@@ -26,7 +27,7 @@ interface Prepared {
   paymentTransaction: string;
   payment: { lamports?: string | number; sol?: string | number; recipient?: string };
   expiresAt?: string;
-  review: { name: string; symbol: string; allocation: typeof initialAllocation };
+  review: { name: string; symbol: string; venue: string; quoteSymbol: string; allocation: typeof initialAllocation };
 }
 const initialAllocation = { topblastPercent: 70, creatorPercent: 20, protocolPercent: 10 };
 
@@ -40,6 +41,8 @@ const decodeBase64 = (value: string) => Uint8Array.from(atob(value), (character)
 const encodeBase64 = (value: Uint8Array) => btoa(String.fromCharCode(...value));
 
 export function LaunchForm() {
+  const [venue, setVenue] = useState<"stonkfun" | "pumpfun">("stonkfun");
+  const mintSigner = useRef<Keypair | null>(null);
   const [wallet, setWallet] = useState<WalletAccountLike | null>(null);
   const [wallets, setWallets] = useState<readonly WalletLike[]>([]);
   const [selectedWallet, setSelectedWallet] = useState("");
@@ -52,7 +55,8 @@ export function LaunchForm() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<Record<string, string> | null>(null);
-  const [runtime, setRuntime] = useState<{ ready: boolean; missing: string[] } | null>(null);
+  const [runtime, setRuntime] = useState<{ ready: boolean; missing: string[]; pumpEnabled: boolean } | null>(null);
+  const venueReady = Boolean(runtime?.ready && (venue === "stonkfun" || runtime.pumpEnabled));
   const total = useMemo(() => allocation.topblastPercent + allocation.creatorPercent + allocation.protocolPercent, [allocation]);
 
   useEffect(() => {
@@ -62,8 +66,8 @@ export function LaunchForm() {
     } catch { /* Storage may be unavailable; in-memory state still prevents resubmission. */ }
     fetch("/api/health", { cache: "no-store" })
       .then((response) => response.json())
-      .then((body) => setRuntime({ ready: Boolean(body.ready), missing: body.missing ?? [] }))
-      .catch(() => setRuntime({ ready: false, missing: ["runtime health check"] }));
+      .then((body) => setRuntime({ ready: Boolean(body.ready), missing: body.missing ?? [], pumpEnabled: Boolean(body.checks?.pumpEnabled) }))
+      .catch(() => setRuntime({ ready: false, missing: ["runtime health check"], pumpEnabled: false }));
   }, []);
 
   useEffect(() => {
@@ -110,16 +114,18 @@ export function LaunchForm() {
       if (!connected) { await connect(); throw new Error("Wallet connected. Review the form, then launch again."); }
       if (!logo) throw new Error("Choose a PNG, JPEG, or WebP image");
       if (total !== 100) throw new Error("Fee allocation must total 100%");
+      mintSigner.current = venue === "pumpfun" ? Keypair.generate() : null;
       const payload = {
+        venue, pumpMint: mintSigner.current?.publicKey.toBase58(),
         creatorWallet: connected.address,
         name: form.get("name"), symbol: form.get("symbol"), description: form.get("description"), logo,
-        quoteMint: STONK_MINT, quoteSymbol: "STONK", feeTier: form.get("feeTier"), allocation,
+        quoteMint: venue === "pumpfun" ? "So11111111111111111111111111111111111111112" : STONK_MINT, quoteSymbol: venue === "pumpfun" ? "SOL" : "STONK", feeTier: form.get("feeTier") ?? "1%", allocation,
         website: form.get("website"), twitter: form.get("twitter"), telegram: form.get("telegram"),
       };
       const response = await fetch("/api/launch/prepare", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Could not prepare launch");
-      setPrepared({ ...body, logo, review: { name: String(payload.name), symbol: String(payload.symbol).toUpperCase(), allocation: { ...allocation } } });
+      setPrepared({ ...body, logo, review: { venue, quoteSymbol: payload.quoteSymbol, name: String(payload.name), symbol: String(payload.symbol).toUpperCase(), allocation: { ...allocation } } });
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not prepare launch"); }
     finally { setBusy(false); }
   }
@@ -149,7 +155,15 @@ export function LaunchForm() {
     setBusy(true); setError("");
     try {
       const signer = walletObject.features["solana:signTransaction"] as SignTransactionFeature;
-      const signed = await signer.signTransaction({ account: wallet, transaction: decodeBase64(prepared.paymentTransaction), chain: "solana:mainnet" });
+      if (prepared.expiresAt && new Date(prepared.expiresAt).getTime() <= Date.now()) throw new Error("Quote expired. Edit details and prepare a fresh review.");
+      let bytes = decodeBase64(prepared.paymentTransaction);
+      if (prepared.review.venue === "pumpfun") {
+        if (!mintSigner.current) throw new Error("Mint preparation expired. Prepare a fresh review.");
+        const tx = Transaction.from(bytes);
+        tx.partialSign(mintSigner.current);
+        bytes = new Uint8Array(tx.serialize({ requireAllSignatures: false }));
+      }
+      const signed = await signer.signTransaction({ account: wallet, transaction: bytes, chain: "solana:mainnet" });
       const signedTransaction = signed[0]?.signedTransaction;
       if (!signedTransaction) throw new Error("Wallet did not return a signed transaction");
       const pending = { launchId: prepared.launchId, paymentSignature: paymentSignatureFromTransaction(signedTransaction) };
@@ -169,6 +183,7 @@ export function LaunchForm() {
       {runtime && !runtime.ready && <div className="error"><strong>Launch activation pending.</strong> The transaction button stays locked until infrastructure checks pass. Launch services are not ready yet. No payment can be submitted here.</div>}
       <fieldset disabled={busy || Boolean(prepared) || Boolean(receipt)}>
       <div className="form-grid">
+        <div className="field full"><label htmlFor="venue">Launch venue</label><select id="venue" value={venue} onChange={(event) => setVenue(event.target.value as typeof venue)}><option value="stonkfun">StonkFun · STONK pair</option><option value="pumpfun">Pump.fun · SOL pair</option></select>{venue === "pumpfun" && <p className="notice">Regular Pump.fun token with TopBlast deposit-funded rewards paid in WSOL. Pump.fun native holder rewards are separate and are not enabled. Tracking pauses at graduation until the new market is verified.</p>}</div>
         <div className="field"><label htmlFor="name">Token name</label><input id="name" name="name" required maxLength={32} placeholder="Top Coin" /></div>
         <div className="field"><label htmlFor="symbol">Ticker</label><input id="symbol" name="symbol" required maxLength={10} placeholder="TOP" /></div>
         <div className="field full"><label htmlFor="description">Description</label><textarea id="description" name="description" maxLength={500} placeholder="What this token is for." /></div>
@@ -176,17 +191,17 @@ export function LaunchForm() {
         <div className="field"><label htmlFor="twitter">X URL</label><input id="twitter" name="twitter" type="url" placeholder="https://x.com/..." /></div>
         <div className="field"><label htmlFor="website">Website URL</label><input id="website" name="website" type="url" placeholder="https://..." /></div>
         <div className="field"><label htmlFor="telegram">Telegram URL</label><input id="telegram" name="telegram" type="url" placeholder="https://t.me/..." /></div>
-        <div className="field"><label htmlFor="feeTier">StonkFun pool fee</label><select id="feeTier" name="feeTier" defaultValue="1%"><option value="1%">1% pool, 0.5% creator share</option><option value="2%">2% pool, 1.5% creator share</option></select></div>
+        {venue === "stonkfun" && <div className="field"><label htmlFor="feeTier">StonkFun pool fee</label><select id="feeTier" name="feeTier" defaultValue="1%"><option value="1%">1% pool, 0.5% creator share</option><option value="2%">2% pool, 1.5% creator share</option></select></div>}
       </div>
       <div className="form-section">
         <div className="section-label">Pair</div>
-        <h3>STONK</h3>
-        <p className="notice mono">{STONK_MINT}</p>
+        <h3>{venue === "pumpfun" ? "SOL" : "STONK"}</h3>
+        <p className="notice mono">{venue === "pumpfun" ? "So11111111111111111111111111111111111111112" : STONK_MINT}</p>
       </div>
       <div className="form-section">
         <div className="section-label">TopBlast rewards</div>
         <h3>Fund the blast zone.</h3>
-        <p className="notice">When eligible holders fall below their verified average entry, they share the funded TopBlast reward pool. StonkFun sends creator fees to the creator wallet. You later deposit the declared gross amount through the creator dashboard, and the fixed allocation is enforced by that transaction.</p>
+        <p className="notice">When eligible holders fall below their verified average entry, they share the funded TopBlast reward pool. Creators claim venue fees to their wallet, then deposit a declared gross amount through the creator dashboard, and the fixed allocation is enforced by that transaction.</p>
         <div className="allocation-grid">
           {(["topblastPercent", "creatorPercent", "protocolPercent"] as const).map((key) => (
             <label className="allocation" key={key}>
@@ -203,7 +218,8 @@ export function LaunchForm() {
         <div className="panel" style={{ background: "#fff5d7" }}>
           <div className="section-label">Transaction review</div>
           <h3>{prepared.review.name} · ${prepared.review.symbol}</h3>
-          <p className="notice">Pair: {prepared.review.symbol} / STONK. Allocation: {prepared.review.allocation.topblastPercent}% rewards, {prepared.review.allocation.creatorPercent}% creator retained, {prepared.review.allocation.protocolPercent}% protocol.</p>
+          <p className="notice">Venue: {prepared.review.venue === "pumpfun" ? "Pump.fun" : "StonkFun"}. Pair: {prepared.review.symbol} / {prepared.review.quoteSymbol}. Allocation: {prepared.review.allocation.topblastPercent}% rewards, {prepared.review.allocation.creatorPercent}% creator retained, {prepared.review.allocation.protocolPercent}% protocol.</p>
+          {prepared.review.venue === "pumpfun" && <p className="notice">Shown SOL cost is the simulated debit for network fees and account creation. No initial buy. Creator fees follow Pump.fun’s schedule. TopBlast rewards require a separate creator deposit.</p>}
           <p className="notice">Network: Solana mainnet. Fee payer: <span className="mono">{wallet?.address}</span>. Payment: {prepared.payment.sol ?? prepared.payment.lamports ?? "See wallet"} {prepared.payment.sol ? "SOL" : "lamports"}. Recipient: <span className="mono">{prepared.payment.recipient ?? "Shown by your wallet"}</span>. Quote expires: {prepared.expiresAt ? new Date(prepared.expiresAt).toLocaleTimeString() : "about 90 seconds after preparation"}.</p>
           <button type="button" className="button" disabled={busy} onClick={signAndSubmit}>Confirm in wallet</button> <button type="button" className="button button-secondary" disabled={busy} onClick={() => setPrepared(null)}>Edit details</button>
         </div>
@@ -212,8 +228,8 @@ export function LaunchForm() {
       {error && <div className="error">{error}</div>}
       {result && <div className={result.trackerStatus === "active" ? "success" : "error"}><strong>{result.trackerStatus === "active" ? "Launch complete. TopBlast tracking active." : "Token launched. Tracker registration needs recovery."}</strong><br />Mint: {result.mint}<br />Pool: {result.pool}<br />Signature: {result.signature}{result.trackerStatus !== "active" && <><br />Use the saved payment status recovery to retry tracking. No second payment is required.</>}</div>}
       <div className="form-footer">
-        <p className="notice">Non-custodial. Your wallet signs the exact StonkFun payment transaction. TopBlast never receives your private key.</p>
-        {!prepared && !receipt && !result && <button className="button" disabled={busy || total !== 100 || !runtime?.ready}>{busy ? "Preparing..." : !runtime?.ready ? "Activation pending" : wallet ? "Launch on STONK" : "Connect and launch"}</button>}
+        <p className="notice">Your wallet signs the reviewed launch transaction. TopBlast never receives your private key.</p>
+        {!prepared && !receipt && !result && <button className="button" disabled={busy || total !== 100 || !venueReady}>{busy ? "Preparing..." : !venueReady ? "Activation pending" : wallet ? venue === "pumpfun" ? "Launch on Pump.fun" : "Launch on STONK" : "Connect and launch"}</button>}
       </div>
       {!wallet && <div className="wallet-picker"><select aria-label="Wallet" value={selectedWallet} onChange={(event) => setSelectedWallet(event.target.value)}>{wallets.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select><button className="button button-secondary" type="button" onClick={() => void connect().catch((caught) => setError(caught instanceof Error ? caught.message : "Wallet connection failed"))}>Connect wallet</button></div>}
       {wallet && <p className="notice">Connected: {walletName} · <span className="mono">{wallet.address}</span></p>}

@@ -4,11 +4,14 @@ import {
   createTransferCheckedInstruction,
   getAssociatedTokenAddressSync,
   TOKEN_PROGRAM_ID,
+  NATIVE_MINT,
+  createSyncNativeInstruction,
 } from "@solana/spl-token";
 import {
   PublicKey,
   Transaction,
   TransactionInstruction,
+  SystemProgram,
 } from "@solana/web3.js";
 import { solanaRpc } from "@/lib/solana/rpc";
 import { inspectSignedMessage } from "@/lib/solana/signed-message";
@@ -42,6 +45,7 @@ export async function prepareCheckedTransfer(input: {
   mint: string;
   transfers: CheckedTransfer[];
   memo: string;
+  wrapNative?: boolean;
 }): Promise<PreparedCheckedTransfer> {
   if (!input.transfers.length) throw new Error("At least one transfer is required");
   if (input.transfers.some((item) => item.amountAtoms <= 0n)) throw new Error("Transfer amounts must be positive");
@@ -61,6 +65,13 @@ export async function prepareCheckedTransfer(input: {
   }));
   const latest = await solanaRpc<LatestBlockhash>("getLatestBlockhash", [{ commitment: "finalized" }]);
   const transaction = new Transaction({ feePayer: payer, recentBlockhash: latest.value.blockhash });
+  if (input.wrapNative) {
+    if (!mint.equals(NATIVE_MINT)) throw new Error("Only native SOL can be wrapped into WSOL");
+    const required = input.transfers.reduce((sum, item) => sum + item.amountAtoms, 0n);
+    transaction.add(createAssociatedTokenAccountIdempotentInstruction(payer, source, payer, mint));
+    transaction.add(SystemProgram.transfer({ fromPubkey: payer, toPubkey: source, lamports: required }));
+    transaction.add(createSyncNativeInstruction(source));
+  }
   for (const item of destinations) {
     transaction.add(createAssociatedTokenAccountIdempotentInstruction(payer, item.tokenAccount, item.owner, mint, TOKEN_PROGRAM_ID));
     transaction.add(createTransferCheckedInstruction(source, mint, item.tokenAccount, payer, item.amountAtoms, decimals!, [], TOKEN_PROGRAM_ID));

@@ -17,6 +17,7 @@ export function buildEpochPlan(input: EpochPlanInput) {
   if (input.positions.some((position) => position.launchId !== input.launchId)) {
     throw new Error("Cross-launch position contamination detected");
   }
+  if (input.positions.some((position) => position.lastActivitySlot > input.snapshotSlot)) throw new Error("Position includes activity after the finalized snapshot");
   const snapshots = input.positions.map((position) => snapshotPosition({
     position, epochStartSlot: input.startSlot,
     currentPriceQuoteAtomsPerToken: input.currentPriceQuoteAtomsPerToken,
