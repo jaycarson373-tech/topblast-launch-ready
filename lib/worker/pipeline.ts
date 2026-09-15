@@ -121,7 +121,7 @@ export async function planEpoch(db: SupabaseClient, row: MarketRow, owner: strin
     if (!earliest) return;
     const startTime = new Date(previous?.end_time ?? earliest.block_time);
     if (Date.now() - startTime.getTime() < interval * 1000) return;
-    const { data: observations, error: priceError } = await db.from("price_observations").select("slot,block_time,price_quote_atoms_per_token").eq("launch_id", row.launch_id).gte("block_time", startTime.toISOString()).order("block_time");
+    const { data: observations, error: priceError } = await db.from("price_observations").select("slot,block_time,price_quote_atoms_per_token").eq("launch_id", row.launch_id).gte("block_time", startTime.toISOString()).lte("slot", row.last_indexed_slot).order("block_time");
     if (priceError) throw priceError;
     const endTime = new Date();
     const canonical = canonicalEpochPrice({
