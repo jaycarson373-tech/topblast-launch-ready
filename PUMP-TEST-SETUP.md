@@ -11,6 +11,8 @@ Pump.fun native holder rewards are **not** enabled. They are distributed by Pump
 
 ## Required operator action
 
+Railway rejected the September 15 service updates because the account trial expired. Select a plan in Railway, then redeploy the existing web and worker services from this repository. The new Vercel release is deployed; the Railway worker is still on its older release until this is resolved.
+
 The existing Supabase project is connected. Its Pump migration is not applied as of this release.
 
 Open the SQL editor in that same project and paste the contents of:
