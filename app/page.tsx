@@ -16,16 +16,16 @@ export default function Home() {
             <p className="hero-copy">Bought in. Price dropped. Still holding? TopBlast is designed to share funded rewards with verified buyers below their entry.</p>
             <div className="hero-actions">
               <Link className="button" href="/launch">Launch token</Link>
-              <Link className="button button-secondary" href="/explore">Explore launches</Link>
+              <Link className="button button-secondary" href="/test">Test without funds</Link>
             </div>
-            <p className="microcopy">StonkFun or Pump.fun. Your launch, with TopBlast on top.</p>
+            <p className="microcopy">StonkFun underneath. TopBlast on top. Free rehearsal available now.</p>
           </div>
           <BlastExample />
         </div>
       </section>
       <section className="positioning">
         <div className="shell position-grid">
-          <div><span>STONKFUN + PUMP.FUN</span><strong>Launch + liquidity infrastructure.</strong></div>
+          <div><span>STONKFUN</span><strong>Launch + liquidity infrastructure.</strong></div>
           <div><span>OUR PLATFORM</span><strong>TopBlast reward infrastructure.</strong></div>
           <div><span>CREATOR</span><strong>Sets the reward allocation.</strong></div>
           <div><span>HOLDER</span><strong>Must qualify at each snapshot.</strong></div>

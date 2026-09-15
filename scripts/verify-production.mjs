@@ -3,6 +3,7 @@ const smokeOnly = process.argv.includes("--smoke");
 const checks = [
   ["homepage", "/", [200]],
   ["launch page", "/launch", [200]],
+  ["free rehearsal", "/test", [200]],
   ["explore page", "/explore", [200]],
   ["liveness", "/api/live", [200]],
   ["health", "/api/health", smokeOnly ? [200, 503] : [200]],

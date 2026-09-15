@@ -12,6 +12,6 @@ export function PlatformStatus() {
   }, []);
   return <div className="platform-status" role="status"><div className="shell">
     <strong>{state.mode === "checking" ? "Checking availability" : state.mode === "unavailable" ? "Status unavailable" : state.mode === "operational" ? "Reward engine operational" : state.mode === "launches" ? "Controlled launch testing" : "Configuration required"}</strong>
-    <span>{state.mode === "checking" ? "Verifying launch services…" : state.mode === "unavailable" ? "Launch availability could not be verified. Please try again shortly." : state.mode === "operational" ? "Finalized tracking, funding, epochs, and wallet-approved payouts are available." : state.text === "acceptance_cycle_required" ? "Infrastructure is configured, but a real end-to-end payout proof is still required before production claims." : "Launch or reward infrastructure is not fully configured. No unsupported transaction can be submitted."}</span>
+    <span>{state.mode === "checking" ? "Verifying launch services…" : state.mode === "unavailable" ? "Launch availability could not be verified. Please try again shortly." : state.mode === "operational" ? "Finalized tracking, funding, epochs, and wallet-approved payouts are available." : state.mode === "preview" ? "Live launches are locked. Try the free simulation at Test now. No funds or wallet required." : "Controlled launches are available. A real end-to-end payout proof is still required before production claims."}</span>
   </div></div>;
 }
