@@ -20,6 +20,8 @@ Production web URL: `https://topblast-stonkfun-launchpad.vercel.app`
 
 Repository: `jaycarson373-tech/topblast-stonkfun-launchpad`, branch `main`.
 
+Runtime: Node `22.x`, pinned in `package.json` for both Git-based and CLI builds. The installed Supabase client requires Node 22+; Node 20 fails during worker startup. Validate using `pnpm test` on Node 22 before deployment. Railway uses `pnpm railway:start` and `/api/live` as its health check.
+
 Railway project: `topblast-stonkfun-launchpad` (`335e8194-a55f-4178-ad02-3d7e488d7fdd`).
 
 Production environment: `42b3d12d-9aed-4f56-aefb-47198927927b`.
