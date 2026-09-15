@@ -1,9 +1,9 @@
-> September 15 update: StonkFun and Pump.fun creation paths are implemented, and all four database migrations are applied. Production launches and payouts remain gated pending treasury public addresses and controlled real-money acceptance. Railway services currently point at the separate `topblast-robinhood` repository; service ownership must be resolved before another launchpad worker deployment. A passed build or read-only simulation is not a completed launch-to-payout cycle.
+> September 15 update: StonkFun and Pump.fun creation paths are implemented, and all four database migrations are applied. Production launches and payouts remain gated pending treasury public addresses and controlled real-money acceptance. The user confirmed that the old `topblast-launch` Railway project belongs to the rebranded Robinhood product. Do not deploy this repository there. This launchpad now has a separate Railway project, `topblast-stonkfun-launchpad`, with one reward worker; its website remains on Vercel. A passed build or read-only simulation is not a completed launch-to-payout cycle.
 
 ## September 15: exact remaining setup
 
 1. Supply `TOPBLAST_TREASURY_ADDRESS` and `PROTOCOL_TREASURY_ADDRESS`, both public Solana wallet addresses. The reward wallet must be connectable to approve payouts. No private keys go into Vercel or Railway.
-2. Supabase is complete. The fourth migration was applied through the signed-in editor, and production health confirms `pumpSchemaReady=true`. Confirm whether Railway's existing `topblast-launch` services should run this StonkFun/Pump launchpad or the separately connected Robinhood application. Do not overwrite the other application's deployments without this choice.
+2. Supabase is complete. The fourth migration was applied through the signed-in editor, and production health confirms `pumpSchemaReady=true`. Railway ownership is resolved: use only the launchpad project and service IDs below, not Robinhood's old `topblast-launch` project.
 3. Keep `LAUNCHES_ENABLED=false`, `PUMPFUN_ENABLED=false` (default), and `DRY_RUN=true` until the addresses are installed and reviewed. `PUMPFUN_ENABLED=true` enables the second venue only after its migration and controlled acceptance setup. No Pump.fun API key is required.
 4. Creator wallet: fund the amount shown by the simulated launch review. Reward treasury: fund transaction fees in SOL, then use each launch's creator deposit action to fund its isolated ledger. A plain transfer to the treasury is not attributed reward funding. Pump.fun deposits wrap SOL into WSOL; Pump.fun payouts use WSOL. StonkFun uses STONK. No swap is involved.
 5. During controlled acceptance, enable launches, set `DRY_RUN=false`, and use **Admin > Enable epoch planning**. Creator signs creation and funding; treasury wallet signs the reviewed payout. Verify finalized public proof, restart recovery, and two-launch isolation before public opening.
@@ -12,24 +12,27 @@ Pump.fun scope: regular SOL-paired `create_v2` coins, verified curve buys/sells/
 
 Read-only mainnet evidence: decoded buy [3yuj7h4aEiJaPWuAoVenKuSTktjKu9RxwazwG4ynMCC7xebFwGJTLXjPFfYpHx28wzDWxY523i2KnS6Ntwj2qb7J](https://solscan.io/tx/3yuj7h4aEiJaPWuAoVenKuSTktjKu9RxwazwG4ynMCC7xebFwGJTLXjPFfYpHx28wzDWxY523i2KnS6Ntwj2qb7J), slot 447237789. Official creation simulation passed with 97,358 compute units. Neither transaction creation nor payout was signed or broadcast by this check. Run `pnpm exec tsx scripts/verify-pump-readonly.ts` to repeat a read-only recent-trade and creation-simulation check.
 
-Current infrastructure update: the Helius API/RPC connection, production webhook, webhook secret, admin token, Vercel project, both Railway services, and the production Supabase schema are configured. The generated operational secrets are sealed in the hosting providers and stored in the macOS Keychain under account `topblast-production`. Do not recreate or paste them. The only infrastructure inputs still required are the reward and protocol treasury **public addresses**.
+Current infrastructure update: Vercel and the production Supabase schema are configured. The dedicated Railway worker has the launchpad's existing Supabase and Helius settings, with `DRY_RUN=true`, launch flags disabled, and `PAYOUT_MODE=manual_wallet`. Secret values were transferred directly without writing them into source or logs. Check the worker deployment and heartbeat before activation. Do not recreate working credentials. The wallet inputs still required are the reward and protocol treasury **public addresses**.
 
 # TopBlast Launch: exact go-live runbook
 
 Production web URL: `https://topblast-stonkfun-launchpad.vercel.app`
 
-Railway project: `topblast-launch`
+Repository: `jaycarson373-tech/topblast-stonkfun-launchpad`, branch `main`.
 
-Railway services already created:
+Railway project: `topblast-stonkfun-launchpad` (`335e8194-a55f-4178-ad02-3d7e488d7fdd`).
 
-- `web`
-- `rewards-worker`
+Production environment: `42b3d12d-9aed-4f56-aefb-47198927927b`.
+
+Only Railway service: `rewards-worker` (`f654f144-44db-4d5c-8def-44a742061b78`). No Railway web service is needed because Vercel serves the website and API.
+
+The separate repository `jaycarson373-tech/topblast-robinhood` and Railway project `topblast-launch` belong to Robinhood. Never use that project's service IDs in this launchpad's deployment commands.
 
 Keep `LAUNCHES_ENABLED=false`, `DRY_RUN=true`, and `reward_engine_paused=true` until every check below passes.
 
 ## 1. Supabase is complete
 
-All four production migrations have been applied to the existing `Topblast` Supabase project. Vercel has the URL and sealed service-role credential. Railway was previously configured too, but must be rechecked after resolving the repository ownership conflict. Do not recreate Supabase or replace working Vercel credentials.
+All four production migrations have been applied to the existing `Topblast` Supabase project (`pmbrkwohiaapxcouoiux`). Vercel and the new dedicated Railway worker have its URL and server-side service-role credential. Do not recreate Supabase or replace working Vercel credentials.
 
 ## 2. Wallet setup
 
@@ -67,9 +70,9 @@ Redeploy after saving.
 
 `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `HELIUS_API_KEY`, `HELIUS_WEBHOOK_ID`, `HELIUS_WEBHOOK_SECRET`, `SOLANA_RPC_URL`, and `ADMIN_API_TOKEN` are already installed in Vercel. Leave them unchanged.
 
-## 5. Paste these variables into both Railway services
+## 5. Set these variables in the dedicated Railway worker
 
-Open the Railway `topblast-launch` project. For both `web` and `rewards-worker`, use **Variables > RAW Editor** and paste:
+Open Railway `topblast-stonkfun-launchpad` > `rewards-worker` > **Variables > RAW Editor** and paste:
 
 ```text
 TOPBLAST_TREASURY_ADDRESS=YOUR_REWARD_TREASURY_PUBLIC_ADDRESS
@@ -79,11 +82,16 @@ PROTOCOL_TREASURY_ADDRESS=YOUR_PROTOCOL_TREASURY_PUBLIC_ADDRESS
 Service-specific variables are already configured:
 
 ```text
-web: SERVICE_MODE=web
 rewards-worker: SERVICE_MODE=worker
 ```
 
-The Supabase, Helius, admin, worker-limit, StonkFun, dry-run, and launch-gate variables are already installed in both Railway services. Leave them unchanged.
+The Supabase, Helius, worker-limit, StonkFun, dry-run, and launch-gate variables are already installed in this worker. Leave them unchanged. Admin authorization belongs to the Vercel API and does not need to be duplicated into the worker.
+
+The worker source is this launchpad repository on `main`. For a deliberate CLI deployment, use explicit targets:
+
+```bash
+npx @railway/cli up -p 335e8194-a55f-4178-ad02-3d7e488d7fdd -e 42b3d12d-9aed-4f56-aefb-47198927927b -s f654f144-44db-4d5c-8def-44a742061b78 --detach
+```
 
 ## 6. Verify before enabling launches
 
@@ -115,7 +123,7 @@ Open `/admin`, enter that token, and confirm the exact treasury public address a
 
 ## 7. Activate controlled launches
 
-Change `LAUNCHES_ENABLED=true` in Vercel and Railway web, then redeploy. `/api/health` must return HTTP 200 with `"ready": true`.
+After treasury review, change `LAUNCHES_ENABLED=true` in Vercel and the dedicated Railway worker, then redeploy. Enable `PUMPFUN_ENABLED=true` in both only when including Pump in controlled testing. `/api/health` must report the selected venue's `launchReady=true`; this does not certify rewards or replace the acceptance cycle.
 
 Leave these unchanged:
 

@@ -11,7 +11,7 @@ Pump.fun native holder rewards are **not** enabled. They are distributed by Pump
 
 ## Required operator action
 
-September 15 update: Railway billing now accepts deployments. However, the existing `topblast-launch` project's `web` and `rewards-worker` services have been connected to `jaycarson373-tech/topblast-robinhood`. Its automatic deployments superseded this launchpad's uploads. Confirm which application owns those services before reconnecting or redeploying. Do not overwrite Robinhood's configuration or create duplicate paid services without that choice.
+September 15 clarification: the user confirmed the old `topblast-launch` project was rebranded to Robinhood. Leave it and `topblast-robinhood` untouched. This launchpad now has a separate Railway project, `topblast-stonkfun-launchpad` (`335e8194-a55f-4178-ad02-3d7e488d7fdd`), with one `rewards-worker` (`f654f144-44db-4d5c-8def-44a742061b78`). Its website and API stay on the existing Vercel deployment. The worker's database and Helius settings are installed; verify its deployment and heartbeat before activation. See `DEPLOY_NOW.md` for explicit deployment targets.
 
 The existing Supabase project is connected. `202609150001_pumpfun.sql` was applied through its signed-in SQL editor on September 15. The deployed health endpoint now reports `pumpSchemaReady=true`. Live permission checks verified metadata RLS enabled, anonymous reads denied, and service-role insert allowed but update/delete denied. No SQL copy/paste or new Supabase project is needed.
 
