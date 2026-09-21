@@ -8,11 +8,12 @@ describe("Supabase migrations", () => {
     const db = new PGlite();
     // Supabase's service_role bypasses RLS but still obeys SQL table privileges.
     await db.exec("create role service_role bypassrls; create role anon; create role authenticated;");
-    for (const file of ["202609130001_topblast_multilaunch.sql", "202609140001_audit_hardening.sql", "202609140002_operational_pipeline.sql", "202609150001_pumpfun.sql"]) {
+    for (const file of ["202609130001_topblast_multilaunch.sql", "202609140001_audit_hardening.sql", "202609140002_operational_pipeline.sql", "202609150001_pumpfun.sql", "202609210001_test_launches.sql"]) {
       const sql = (await readFile(join(process.cwd(), "supabase", "migrations", file), "utf8")).replace("create extension if not exists pgcrypto;", "");
       await db.exec(sql);
     }
     await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609150001_pumpfun.sql"), "utf8"));
+    await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609210001_test_launches.sql"), "utf8"));
     await db.exec("set role service_role");
     await db.query("insert into public.launch_metadata(id,metadata,image_data) values('00000000-0000-4000-8000-000000000099','{}','test-image')");
     await expect(db.query("update public.launch_metadata set image_data='overwritten'")).rejects.toThrow();
@@ -24,7 +25,7 @@ describe("Supabase migrations", () => {
     expect(columns.rows.map((row) => row.column_name)).toContain("launch_id");
     const a = "00000000-0000-4000-8000-00000000000a", b = "00000000-0000-4000-8000-00000000000b";
     for (const [id, mint, market] of [[a, "mint-a", "market-a"], [b, "mint-b", "market-b"]]) {
-      await db.query("insert into public.launches(id,venue,creator_wallet,name,symbol,image_url,quote_mint,quote_symbol,mint,market_address,signed_quote_hash,status) values($1::uuid,case when $1::uuid::text like '%00b' then 'pumpfun' else 'stonkfun' end,'creator','Token','TOK','logo','stonk','STONK',$2,$3,'hash','active')", [id, mint, market]);
+      await db.query("insert into public.launches(id,venue,creator_wallet,name,symbol,image_url,quote_mint,quote_symbol,mint,market_address,signed_quote_hash,status,is_test) values($1::uuid,case when $1::uuid::text like '%00b' then 'pumpfun' else 'stonkfun' end,'creator','Token','TOK','logo','stonk','STONK',$2,$3,'hash','active',$4)", [id, mint, market, id === b]);
       await db.query("insert into public.launch_configs(launch_id,fee_tier,topblast_percent,creator_percent,protocol_percent,reward_asset_mint,treasury_address) values($1,'1%',70,20,10,'stonk','treasury')", [id]);
       await db.query("insert into public.funding_intents(id,launch_id,funder_wallet,asset_mint,gross_amount_atoms,reward_amount_atoms,creator_amount_atoms,protocol_amount_atoms,reward_treasury,protocol_treasury,memo,unsigned_transaction,unsigned_message_hash,last_valid_block_height,status,signature,expires_at) values(gen_random_uuid(),$1,'creator','stonk',100,70,20,10,'treasury','protocol',$2,'wire','hash',99,'submitted',$3,now()+interval '1 minute')", [id, `memo-${id}`, `signature-${id}`]);
     }
@@ -69,6 +70,21 @@ describe("Supabase migrations", () => {
     const bPaid = await db.query<{ paid_atoms: string }>("select paid_atoms from public.launch_funding_balances where launch_id=$1", [b]);
     expect(aPaid.rows[0].paid_atoms).toBe("70");
     expect(bPaid.rows[0].paid_atoms).toBe("0");
+    // Public views hide tests even for a service-role caller that bypasses RLS.
+    expect((await db.query<{ id: string }>("select id from public.launch_explore")).rows).toEqual([{ id: a }]);
+    expect((await db.query<{ launch_id: string }>("select launch_id from public.launch_funding_public")).rows).toEqual([{ launch_id: a }]);
+    await expect(db.query("update public.launches set is_test=false where id=$1", [b])).rejects.toThrow("classification is immutable");
+    await db.query("insert into public.transaction_proofs(launch_id,kind,signature,idempotency_key) values($1,'snapshot','test-proof','test-proof')", [b]);
+    // Match Supabase read grants while checking the policies themselves.
+    await db.exec("grant usage on schema public to anon, authenticated; grant select on all tables in schema public to anon, authenticated;");
+    for (const role of ["anon", "authenticated"]) {
+      await db.exec(`set role ${role}`);
+      expect((await db.query<{ id: string }>("select id from public.launches")).rows).toEqual([{ id: a }]);
+      for (const table of ["launch_configs", "funding_deposits", "launch_funding_balances", "transaction_proofs"]) {
+        expect((await db.query(`select launch_id from public.${table} where launch_id=$1`, [b])).rows).toEqual([]);
+      }
+      await db.exec("reset role");
+    }
     await db.exec("set role anon");
     await expect(db.query("insert into public.funding_deposits(launch_id,intent_id,signature,sender_wallet,recipient_wallet,asset_mint,amount_atoms,gross_amount_atoms,protocol_amount_atoms,slot,block_time,proof) select launch_id,id,'evil','x','y','stonk',1,1,0,1,now(),'{}' from public.funding_intents limit 1")).rejects.toThrow();
     await db.exec("reset role");

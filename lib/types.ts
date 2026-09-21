@@ -14,6 +14,7 @@ export interface FeeAllocationPolicy {
 }
 
 export interface LaunchDraft {
+  isTest?: boolean;
   venue?: "stonkfun" | "pumpfun";
   pumpMint?: string;
   creatorWallet: string;

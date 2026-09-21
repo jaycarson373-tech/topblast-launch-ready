@@ -5,7 +5,7 @@ export async function GET(_request: Request, context: { params: Promise<{ addres
   if (!isDatabaseConfigured()) return NextResponse.json({ error: "Database is not configured" }, { status: 503 });
   const { address, wallet } = await context.params;
   const db = getAdminDb();
-  const { data: launch } = await db.from("launches").select("id,price_usd").eq("mint", address).single();
+  const { data: launch } = await db.from("launches").select("id,price_usd").eq("mint", address).eq("is_test", false).single();
   if (!launch) return NextResponse.json({ error: "Launch not found" }, { status: 404 });
   const [{ data: position }, { data: snapshot }, { data: rewards }] = await Promise.all([
     db.from("wallet_positions").select("*").eq("launch_id", launch.id).eq("wallet", wallet).maybeSingle(),

@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { getAdminDb, isDatabaseConfigured } from "@/lib/db/server";
+import { isAdminRequest } from "@/lib/admin-auth";
 
 export async function GET(_request: Request, context: { params: Promise<{ address: string }> }) {
   if (!isDatabaseConfigured()) return NextResponse.json({ error: "Database is not configured" }, { status: 503 });
   const { address } = await context.params;
   const db = getAdminDb();
-  const { data: launch, error } = await db.from("launches").select("*,launch_configs(*)").eq("mint", address).single();
+  let query = db.from("launches").select("*,launch_configs(*)").eq("mint", address);
+  if (!isAdminRequest(_request)) query = query.eq("is_test", false);
+  const { data: launch, error } = await query.single();
   if (error || !launch) return NextResponse.json({ error: "Launch not found" }, { status: 404 });
   const [{ data: epochs }, { data: distributions }, { data: proofs }, { data: funding }, { data: deposits }, { data: prices }, { data: market }, { data: allocations }, { data: batches }, { data: engine }] = await Promise.all([
     db.from("reward_epochs").select("id,sequence,status,start_slot,snapshot_slot,start_time,end_time,reference_price_quote_atoms,funded_budget_atoms,distributed_atoms,allocation_hash,created_at,completed_at").eq("launch_id", launch.id).order("sequence", { ascending: false }).limit(25),

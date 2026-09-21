@@ -40,7 +40,9 @@ const toDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
 const decodeBase64 = (value: string) => Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
 const encodeBase64 = (value: Uint8Array) => btoa(String.fromCharCode(...value));
 
-export function LaunchForm() {
+export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
+  const [operatorToken, setOperatorToken] = useState("");
+  const receiptKey = testMode ? `${RECEIPT_KEY}-test` : RECEIPT_KEY;
   const [venue, setVenue] = useState<"stonkfun" | "pumpfun">("stonkfun");
   const mintSigner = useRef<Keypair | null>(null);
   const [wallet, setWallet] = useState<WalletAccountLike | null>(null);
@@ -61,14 +63,30 @@ export function LaunchForm() {
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(RECEIPT_KEY);
+      const saved = localStorage.getItem(receiptKey);
       if (saved) { const parsed = JSON.parse(saved); if (typeof parsed.launchId === "string" && typeof parsed.paymentSignature === "string") setReceipt(parsed); }
     } catch { /* Storage may be unavailable; in-memory state still prevents resubmission. */ }
+    if (testMode) return;
     fetch("/api/health", { cache: "no-store" })
       .then((response) => response.json())
       .then((body) => setRuntime({ ready: body.venues?.stonkfun ? body.venues.stonkfun.launchReady === true : body.ready === true, missing: body.missing ?? [], pumpReady: body.venues?.pumpfun?.launchReady === true, pumpBlockers: body.venues?.pumpfun?.blockers ?? ["Pump.fun readiness has not been verified"] }))
       .catch(() => setRuntime({ ready: false, missing: ["runtime health check"], pumpReady: false, pumpBlockers: ["Runtime health check unavailable"] }));
-  }, []);
+  }, [receiptKey, testMode]);
+
+  async function checkTestAccess() {
+    setBusy(true); setError(""); setRuntime(null);
+    try {
+      const response = await fetch("/api/launch/test-readiness", { headers: { Authorization: `Bearer ${operatorToken}` }, cache: "no-store" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Operator checks failed");
+      setRuntime(body);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Test readiness unavailable"); }
+    finally { setBusy(false); }
+  }
+
+  function requestHeaders(): Record<string, string> {
+    return { "Content-Type": "application/json", ...(testMode ? { Authorization: `Bearer ${operatorToken}` } : {}) };
+  }
 
   useEffect(() => {
     const registry = getWallets();
@@ -117,13 +135,13 @@ export function LaunchForm() {
       if (total !== 100) throw new Error("Fee allocation must total 100%");
       mintSigner.current = venue === "pumpfun" ? Keypair.generate() : null;
       const payload = {
-        venue, pumpMint: mintSigner.current?.publicKey.toBase58(),
+        venue, isTest: testMode, pumpMint: mintSigner.current?.publicKey.toBase58(),
         creatorWallet: connected.address,
         name: form.get("name"), symbol: form.get("symbol"), description: form.get("description"), logo,
         quoteMint: venue === "pumpfun" ? "So11111111111111111111111111111111111111112" : STONK_MINT, quoteSymbol: venue === "pumpfun" ? "SOL" : "STONK", feeTier: form.get("feeTier") ?? "1%", allocation,
         website: form.get("website"), twitter: form.get("twitter"), telegram: form.get("telegram"),
       };
-      const response = await fetch("/api/launch/prepare", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const response = await fetch("/api/launch/prepare", { method: "POST", headers: requestHeaders(), body: JSON.stringify(payload) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Could not prepare launch");
       setPrepared({ ...body, logo, review: { venue, quoteSymbol: payload.quoteSymbol, name: String(payload.name), symbol: String(payload.symbol).toUpperCase(), allocation: { ...allocation } } });
@@ -137,7 +155,7 @@ export function LaunchForm() {
     setPrepared(null);
     if (body.trackerStatus === "active") {
       setReceipt(null);
-      try { localStorage.removeItem(RECEIPT_KEY); } catch { /* No signing depends on storage. */ }
+      try { localStorage.removeItem(receiptKey); } catch { /* No signing depends on storage. */ }
     }
   }
 
@@ -173,8 +191,8 @@ export function LaunchForm() {
       const pending = { launchId: prepared.launchId, paymentSignature: paymentSignatureFromTransaction(signedTransaction) };
       setReceipt(pending);
       // Save only public identifiers, never signed transaction bytes or wallet secrets.
-      try { localStorage.setItem(RECEIPT_KEY, JSON.stringify(pending)); } catch { /* Show the receipt in the UI. */ }
-      const response = await fetch("/api/launch/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ launchId: prepared.launchId, signedQuote: prepared.signedQuote, signedTransaction: encodeBase64(signedTransaction), logo: prepared.logo }) });
+      try { localStorage.setItem(receiptKey, JSON.stringify(pending)); } catch { /* Show the receipt in the UI. */ }
+      const response = await fetch("/api/launch/submit", { method: "POST", headers: requestHeaders(), body: JSON.stringify({ launchId: prepared.launchId, signedQuote: prepared.signedQuote, signedTransaction: encodeBase64(signedTransaction), logo: prepared.logo }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Could not confirm launch submission. Check status before taking any further action.");
       complete(body);
@@ -184,6 +202,7 @@ export function LaunchForm() {
 
   return (
     <form className="panel" onSubmit={(event) => { event.preventDefault(); void prepare(new FormData(event.currentTarget)); }}>
+      {testMode && <section className="form-section"><div className="section-label">Hidden acceptance launch</div><p className="notice">Real mainnet costs. Hidden on TopBlast, not private onchain or at the venue. Tracking and accounting remain enabled. No token is created until you approve the reviewed transaction in your wallet.</p><div className="field"><label htmlFor="operator-token">Operator access token</label><input id="operator-token" type="password" autoComplete="off" value={operatorToken} disabled={busy || Boolean(prepared)} onChange={(event) => { setOperatorToken(event.target.value); setRuntime(null); }} /></div><p className="notice">Use the existing admin access token, never a wallet private key. It stays in memory and is not saved by this page.</p><button type="button" className="button button-secondary" disabled={busy || !operatorToken || Boolean(prepared)} onClick={() => void checkTestAccess()}>Check test access</button></section>}
       {runtime && !venueReady && <div className="error"><strong>{venue === "pumpfun" ? "Pump.fun activation pending." : "Launch activation pending."}</strong> The transaction button stays locked until infrastructure checks pass. No payment can be submitted here.{venue === "pumpfun" && <ul>{runtime.pumpBlockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul>}</div>}
       <fieldset disabled={busy || Boolean(prepared) || Boolean(receipt)}>
       <div className="form-grid">
@@ -221,6 +240,7 @@ export function LaunchForm() {
       {prepared && !receipt && (
         <div className="panel" style={{ background: "#fff5d7" }}>
           <div className="section-label">Transaction review</div>
+          {testMode && <p className="notice"><strong>TEST LAUNCH · HIDDEN FROM PUBLIC TOPBLAST PAGES</strong><br />This is a real Solana mainnet transaction, not a simulation-only launch.</p>}
           <h3>{prepared.review.name} · ${prepared.review.symbol}</h3>
           <p className="notice">Venue: {prepared.review.venue === "pumpfun" ? "Pump.fun" : "StonkFun"}. Pair: {prepared.review.symbol} / {prepared.review.quoteSymbol}. Allocation: {prepared.review.allocation.topblastPercent}% rewards, {prepared.review.allocation.creatorPercent}% creator retained, {prepared.review.allocation.protocolPercent}% protocol.</p>
           {prepared.review.venue === "pumpfun" && <p className="notice">Shown SOL cost is the simulated debit for network fees and account creation. No initial buy. Creator fees follow Pump.fun’s schedule. TopBlast rewards require a separate creator deposit.</p>}

@@ -14,6 +14,7 @@ export async function createLaunchDraft(draft: LaunchDraft, signedQuote: string,
   const db = getAdminDb();
   const { data, error } = await db.from("launches").insert({
     creator_wallet: draft.creatorWallet,
+    is_test: draft.isTest === true,
     name: draft.name,
     symbol: draft.symbol,
     description: draft.description,
@@ -125,15 +126,15 @@ export async function registerLaunchTracker(launchId: string, input?: { mint: st
   }
 }
 
-export async function verifyLaunchQuote(launchId: string, signedQuote: string): Promise<{ paymentMessageHash: string; creatorWallet: string }> {
+export async function verifyLaunchQuote(launchId: string, signedQuote: string): Promise<{ paymentMessageHash: string; creatorWallet: string; isTest: boolean }> {
   const hash = createHash("sha256").update(signedQuote).digest("hex");
-  const { data, error } = await getAdminDb().from("launches").select("signed_quote_hash,status,payment_message_hash,creator_wallet,quote_expires_at").eq("id", launchId).single();
+  const { data, error } = await getAdminDb().from("launches").select("signed_quote_hash,status,payment_message_hash,creator_wallet,quote_expires_at,is_test").eq("id", launchId).single();
   if (error) throw error;
   if (data.signed_quote_hash !== hash) throw new Error("Signed quote does not match prepared launch");
   if (!["prepared", "processing"].includes(data.status)) throw new Error(`Launch is already ${data.status}`);
   if (data.status === "prepared" && data.quote_expires_at && new Date(data.quote_expires_at).getTime() < Date.now()) throw new Error("Launch quote expired. Prepare a fresh review before signing.");
   if (!data.payment_message_hash) throw new Error("Prepared payment message is missing");
-  return { paymentMessageHash: data.payment_message_hash, creatorWallet: data.creator_wallet };
+  return { paymentMessageHash: data.payment_message_hash, creatorWallet: data.creator_wallet, isTest: data.is_test === true };
 }
 
 export async function verifyLaunchPayment(launchId: string, paymentSignature: string): Promise<void> {

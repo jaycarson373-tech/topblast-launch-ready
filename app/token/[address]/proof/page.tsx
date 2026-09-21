@@ -1,2 +1,3 @@
 import { ProofPage } from "@/components/proof-page";
-export default async function Page({ params }: { params: Promise<{ address: string }> }) { const { address } = await params; return <ProofPage address={address} />; }
+import { requirePublicLaunch } from "@/lib/db/public-launch";
+export default async function Page({ params }: { params: Promise<{ address: string }> }) { const { address } = await params; await requirePublicLaunch(address); return <ProofPage address={address} />; }
