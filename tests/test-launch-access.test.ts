@@ -65,4 +65,9 @@ describe("controlled test launch boundary, no real transactions", () => {
     expect((await POST(request(true, "fixture-operator-token"))).status).toBe(400);
     expect(mocks.create).not.toHaveBeenCalled();
   });
+  it("requires an explicit successful simulation result", async () => {
+    mocks.rpc.mockImplementation(async (method) => method === "getGenesisHash" ? "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d" : { value: {} });
+    expect((await POST(request(true, "fixture-operator-token"))).status).toBe(400);
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
 });

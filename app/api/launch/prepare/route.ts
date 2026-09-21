@@ -37,7 +37,7 @@ export async function POST(request: Request) {
       const simulation = await solanaRpc<{ value: { err: unknown } }>("simulateTransaction", [prepared.paymentTransaction, {
         encoding: "base64", commitment: "finalized", sigVerify: false, replaceRecentBlockhash: false,
       }]);
-      if (simulation.value.err) throw new Error(`StonkFun test payment simulation failed: ${JSON.stringify(simulation.value.err)}`);
+      if (simulation.value?.err !== null) throw new Error(`StonkFun test payment simulation failed or returned no verified result: ${JSON.stringify(simulation.value?.err)}`);
       prepared.raw = { ...prepared.raw, simulation: "passed" };
     }
     const launchId = await createLaunchDraft(draft, prepared.signedQuote, prepared.paymentTransaction, prepared.expiresAt);
