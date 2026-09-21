@@ -17,6 +17,7 @@ export interface LaunchDraft {
   isTest?: boolean;
   venue?: "stonkfun" | "pumpfun";
   pumpMint?: string;
+  launchMint?: string;
   creatorWallet: string;
   name: string;
   symbol: string;

@@ -9,6 +9,9 @@ import type {
   VenueMarketData,
 } from "@/lib/venue/launch-venue-adapter";
 import type { LaunchDraft } from "@/lib/types";
+import { getAdminDb } from "@/lib/db/server";
+import { prepareStonkLaunch, verifyStonkPricing, isStonkDirectQuote, recoverStonkLaunch } from "@/lib/solana/stonk-launchlab";
+import { paymentSignatureFromTransaction } from "@/lib/solana/transaction-signature";
 
 type ApiEnvelope = { data?: Record<string, unknown>; error?: { code?: string; message?: string; retryable?: boolean } };
 
@@ -46,44 +49,36 @@ export class StonkFunAdapter implements LaunchVenueAdapter {
         error.code ?? "stonkfun_error",
         error.message ?? `StonkFun returned HTTP ${response.status}`,
         response.status,
-        Boolean(error.retryable) || response.status >= 500,
+        error.retryable ?? response.status >= 500,
         { ...body, ...error },
       );
     }
     return body.data ?? {};
   }
 
+  async getCreationConfig(quoteMint: string) {
+    return verifyStonkPricing(await this.call(`/launchlab/pricing?quoteMint=${encodeURIComponent(quoteMint)}`), quoteMint);
+  }
+
   async createLaunch(input: LaunchDraft): Promise<PreparedLaunch> {
-    const data = await this.call("/launches/prepare", {
-      method: "POST",
-      body: JSON.stringify({
-        creatorWallet: input.creatorWallet,
-        quoteMint: input.quoteMint,
-        name: input.name,
-        symbol: input.symbol,
-        logo: input.logo,
-        mode: "standard",
-        feeTier: input.feeTier,
-        website: input.website,
-        twitter: input.twitter,
-        telegram: input.telegram,
-      }),
-    });
-    return {
-      signedQuote: String(data.signedQuote ?? ""),
-      paymentTransaction: String(data.paymentTransaction ?? ""),
-      payment: (data.payment ?? {}) as PreparedLaunch["payment"],
-      expiresAt: stringValue(data.expiresAt) ?? stringValue(data.quoteExpiresAt),
-      raw: data,
-    };
+    if (input.feeTier !== "1%") throw new Error("The old Stonk fee-tier selector is no longer supported. Refresh the form; venue fees now come from Stonk's onchain configuration.");
+    return prepareStonkLaunch(input, await this.getCreationConfig(input.quoteMint));
   }
 
   async submitLaunch(input: { signedQuote: string; signedTransaction: string; logo: string }): Promise<SubmittedLaunch> {
+    if (isStonkDirectQuote(input.signedQuote)) {
+      return this.getLaunch(paymentSignatureFromTransaction(Buffer.from(input.signedTransaction, "base64")));
+    }
+    // Recovery only for previously prepared legacy fee-payment launches.
     const data = await this.call("/launches/submit", { method: "POST", body: JSON.stringify(input) });
     return this.normalizeSubmitted(data);
   }
 
   async getLaunch(paymentSignature: string): Promise<VenueLaunch> {
+    const { data: receipt, error } = await getAdminDb().from("launch_submission_receipts")
+      .select("signed_quote,signed_payment_transaction").eq("payment_signature", paymentSignature).maybeSingle();
+    if (error) throw error;
+    if (receipt && isStonkDirectQuote(receipt.signed_quote)) return recoverStonkLaunch(paymentSignature, receipt);
     const data = await this.call(`/launches/${encodeURIComponent(paymentSignature)}`);
     const normalized = this.normalizeSubmitted(data);
     return { ...normalized, status: normalized.status };

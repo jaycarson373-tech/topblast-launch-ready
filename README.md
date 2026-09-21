@@ -2,11 +2,11 @@
 
 The StonkFun launchpad layer for funded TopBlast rewards.
 
-Creators launch through StonkFun’s official non-custodial API. TopBlast registers the finalized LaunchLab market, replays finalized Solana blocks, tracks exact verified buy basis per launch, accepts attributable creator deposits, creates conservative reward snapshots, reserves funded budgets, prepares wallet-approved payouts, reconciles finality, and publishes proof.
+Creators launch through StonkFun’s official direct LaunchLab integration: live pricing, its standard platform, and its onchain launch rules. The retired fee-payment creation API is used only to recover old receipts. New creation uses the official Raydium SDK, a browser-held mint signer, and creator-wallet approval. TopBlast registers the finalized market, tracks verified buy basis per launch, accepts attributable deposits, reserves funded budgets, prepares wallet-approved payouts, and reconciles finality. Real end-to-end reward acceptance is still required before public activation.
 
 ## Funding model
 
-StonkFun standard LaunchLab creator fees are forwarded to the creator wallet. The public API does not expose a per-launch fee-recipient split. TopBlast therefore uses explicit creator deposits. The fixed launch allocation is enforced in the deposit transaction: the reward and protocol amounts are transferred, while the creator portion stays in the creator wallet. A slider alone never counts as funding.
+Stonk documents creator-fee forwarding for adopted standard launches, but TopBlast does not treat that promise as collected funds. The public API does not expose a per-launch fee-recipient split. TopBlast uses explicit creator deposits. The fixed allocation is enforced in the deposit transaction: the reward and protocol amounts are transferred, while the creator portion stays in the creator wallet. A slider alone never counts as funding. Venue fees are read from the current onchain configuration, not the old selectable fee tiers.
 
 ## Reused TopBlast behavior
 

@@ -40,19 +40,18 @@ for (const responseMode of ["timeout", "tracker_pending"] as const) {
       expect(input.venue).toBe(venue); expect(input.creatorWallet).toBe(creator.toBase58());
       expect(input.isTest).toBe(testMode);
       if (testMode) expect(route.request().headers().authorization).toBe("Bearer fixture-operator-token");
-      const mint = venue === "pumpfun" ? new PublicKey(input.pumpMint) : Keypair.generate().publicKey;
+      const mint = new PublicKey(venue === "pumpfun" ? input.pumpMint : input.launchMint);
       // Two-signer fixture tests mint signing without constructing a real Pump launch.
-      const transaction = new Transaction({ feePayer: creator, recentBlockhash: Keypair.generate().publicKey.toBase58() }).add(venue === "pumpfun"
-        ? SystemProgram.createAccount({ fromPubkey: creator, newAccountPubkey: mint, lamports: 1, space: 0, programId: SystemProgram.programId })
-        : SystemProgram.transfer({ fromPubkey: creator, toPubkey: mint, lamports: 1 }));
-      await route.fulfill({ json: { launchId, signedQuote: "fixture-only", paymentTransaction: transaction.serialize({ requireAllSignatures: false }).toString("base64"), payment: { sol: "0.01", lamports: "10000000", recipient: "fixture-program" }, expiresAt: new Date(Date.now() + 75_000).toISOString() } });
+      const transaction = new Transaction({ feePayer: creator, recentBlockhash: Keypair.generate().publicKey.toBase58() }).add(
+        SystemProgram.createAccount({ fromPubkey: creator, newAccountPubkey: mint, lamports: 1, space: 0, programId: SystemProgram.programId }));
+      await route.fulfill({ json: { launchId, signedQuote: "fixture-only", paymentTransaction: transaction.serialize({ requireAllSignatures: false }).toString("base64"), payment: { sol: "0.01", lamports: "10000000", recipient: "fixture-program" }, raw: { mintSignerRequired: true, creationMethod: venue === "stonkfun" ? "stonk_launchlab" : "pump" }, expiresAt: new Date(Date.now() + 75_000).toISOString() } });
     });
     await page.route("**/api/launch/submit", async (route) => {
       submissions++;
       const input = route.request().postDataJSON();
       const transaction = Transaction.from(Buffer.from(input.signedTransaction, "base64"));
-      expect(transaction.signatures).toHaveLength(venue === "pumpfun" ? 2 : 1);
-      if (venue === "pumpfun") expect(transaction.signatures[1].signature?.some((value) => value !== 0)).toBe(true);
+      expect(transaction.signatures).toHaveLength(2);
+      expect(transaction.signatures[1].signature?.some((value) => value !== 0)).toBe(true);
       if (testMode) expect(route.request().headers().authorization).toBe("Bearer fixture-operator-token");
       if (responseMode === "timeout") await route.abort();
       else await route.fulfill({ json: { status: "completed", mint: "fixture-mint", pool: "fixture-pool", signature: "fixture-signature", trackerStatus: "pending" } });

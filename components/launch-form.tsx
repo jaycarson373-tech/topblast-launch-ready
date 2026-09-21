@@ -21,6 +21,7 @@ interface SignTransactionFeature {
 const RECEIPT_KEY = "topblast-launch-receipt-v1";
 interface Receipt { launchId: string; paymentSignature: string }
 interface Prepared {
+  raw?: { mintSignerRequired?: boolean; creationMethod?: string; venueFees?: { denominator: string; protocolRate: string; platformRate: string; creatorRate: string } };
   logo: string;
   launchId: string;
   signedQuote: string;
@@ -57,7 +58,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<Record<string, string> | null>(null);
-  const [runtime, setRuntime] = useState<{ ready: boolean; missing: string[]; pumpReady: boolean; pumpBlockers: string[] } | null>(null);
+  const [runtime, setRuntime] = useState<{ ready: boolean; missing: string[]; stonkBlockers?: string[]; pumpReady: boolean; pumpBlockers: string[] } | null>(null);
   const venueReady = Boolean(venue === "stonkfun" ? runtime?.ready : runtime?.pumpReady);
   const total = useMemo(() => allocation.topblastPercent + allocation.creatorPercent + allocation.protocolPercent, [allocation]);
 
@@ -69,7 +70,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
     if (testMode) return;
     fetch("/api/health", { cache: "no-store" })
       .then((response) => response.json())
-      .then((body) => setRuntime({ ready: body.venues?.stonkfun ? body.venues.stonkfun.launchReady === true : body.ready === true, missing: body.missing ?? [], pumpReady: body.venues?.pumpfun?.launchReady === true, pumpBlockers: body.venues?.pumpfun?.blockers ?? ["Pump.fun readiness has not been verified"] }))
+      .then((body) => setRuntime({ ready: body.venues?.stonkfun ? body.venues.stonkfun.launchReady === true : body.ready === true, stonkBlockers: body.venues?.stonkfun?.blockers ?? [], missing: body.missing ?? [], pumpReady: body.venues?.pumpfun?.launchReady === true, pumpBlockers: body.venues?.pumpfun?.blockers ?? ["Pump.fun readiness has not been verified"] }))
       .catch(() => setRuntime({ ready: false, missing: ["runtime health check"], pumpReady: false, pumpBlockers: ["Runtime health check unavailable"] }));
   }, [receiptKey, testMode]);
 
@@ -133,9 +134,10 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
       if (!connected) { await connect(); throw new Error("Wallet connected. Review the form, then launch again."); }
       if (!logo) throw new Error("Choose a PNG, JPEG, or WebP image");
       if (total !== 100) throw new Error("Fee allocation must total 100%");
-      mintSigner.current = venue === "pumpfun" ? Keypair.generate() : null;
+      mintSigner.current = Keypair.generate();
       const payload = {
-        venue, isTest: testMode, pumpMint: mintSigner.current?.publicKey.toBase58(),
+        venue, isTest: testMode, pumpMint: venue === "pumpfun" ? mintSigner.current.publicKey.toBase58() : undefined,
+        launchMint: venue === "stonkfun" ? mintSigner.current.publicKey.toBase58() : undefined,
         creatorWallet: connected.address,
         name: form.get("name"), symbol: form.get("symbol"), description: form.get("description"), logo,
         quoteMint: venue === "pumpfun" ? "So11111111111111111111111111111111111111112" : STONK_MINT, quoteSymbol: venue === "pumpfun" ? "SOL" : "STONK", feeTier: form.get("feeTier") ?? "1%", allocation,
@@ -179,7 +181,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
       if (!walletObject.accounts.some((account) => account.address === wallet.address && account.chains.includes("solana:mainnet"))) throw new Error("Wallet account changed or disconnected. Reconnect and prepare a fresh review.");
       if (prepared.expiresAt && new Date(prepared.expiresAt).getTime() <= Date.now()) throw new Error("Quote expired. Edit details and prepare a fresh review.");
       let bytes = decodeBase64(prepared.paymentTransaction);
-      if (prepared.review.venue === "pumpfun") {
+      if (prepared.review.venue === "pumpfun" || prepared.raw?.mintSignerRequired) {
         if (!mintSigner.current) throw new Error("Mint preparation expired. Prepare a fresh review.");
         const tx = Transaction.from(bytes);
         tx.partialSign(mintSigner.current);
@@ -203,7 +205,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
   return (
     <form className="panel" onSubmit={(event) => { event.preventDefault(); void prepare(new FormData(event.currentTarget)); }}>
       {testMode && <section className="form-section"><div className="section-label">Hidden acceptance launch</div><p className="notice">Real mainnet costs. Hidden on TopBlast, not private onchain or at the venue. Tracking and accounting remain enabled. No token is created until you approve the reviewed transaction in your wallet.</p><div className="field"><label htmlFor="operator-token">Operator access token</label><input id="operator-token" type="password" autoComplete="off" value={operatorToken} disabled={busy || Boolean(prepared)} onChange={(event) => { setOperatorToken(event.target.value); setRuntime(null); }} /></div><p className="notice">Use the existing admin access token, never a wallet private key. It stays in memory and is not saved by this page.</p><button type="button" className="button button-secondary" disabled={busy || !operatorToken || Boolean(prepared)} onClick={() => void checkTestAccess()}>Check test access</button></section>}
-      {runtime && !venueReady && <div className="error"><strong>{venue === "pumpfun" ? "Pump.fun activation pending." : "Launch activation pending."}</strong> The transaction button stays locked until infrastructure checks pass. No payment can be submitted here.{venue === "pumpfun" && <ul>{runtime.pumpBlockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul>}</div>}
+      {runtime && !venueReady && <div className="error"><strong>{venue === "pumpfun" ? "Pump.fun activation pending." : "Launch activation pending."}</strong> The transaction button stays locked until infrastructure checks pass. No payment can be submitted here.<ul>{(venue === "pumpfun" ? runtime.pumpBlockers : runtime.stonkBlockers ?? []).map((blocker) => <li key={blocker}>{blocker}</li>)}</ul></div>}
       <fieldset disabled={busy || Boolean(prepared) || Boolean(receipt)}>
       <div className="form-grid">
         <div className="field full"><label htmlFor="venue">Launch venue</label><select id="venue" value={venue} onChange={(event) => setVenue(event.target.value as typeof venue)}><option value="stonkfun">StonkFun · STONK pair</option><option value="pumpfun">Pump.fun · SOL pair</option></select>{venue === "pumpfun" && <p className="notice">Regular Pump.fun token with TopBlast deposit-funded rewards paid in WSOL. Pump.fun native holder rewards are separate and are not enabled. Tracking pauses at graduation until the new market is verified.</p>}</div>
@@ -214,7 +216,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
         <div className="field"><label htmlFor="twitter">X URL</label><input id="twitter" name="twitter" type="url" placeholder="https://x.com/..." /></div>
         <div className="field"><label htmlFor="website">Website URL</label><input id="website" name="website" type="url" placeholder="https://..." /></div>
         <div className="field"><label htmlFor="telegram">Telegram URL</label><input id="telegram" name="telegram" type="url" placeholder="https://t.me/..." /></div>
-        {venue === "stonkfun" && <div className="field"><label htmlFor="feeTier">StonkFun pool fee</label><select id="feeTier" name="feeTier" defaultValue="1%"><option value="1%">1% pool, 0.5% creator share</option><option value="2%">2% pool, 1.5% creator share</option></select></div>}
+        {venue === "stonkfun" && <p className="notice">Created through StonkFun’s standard LaunchLab configuration. Venue trading fees are set onchain by StonkFun and shown in the review. TopBlast allocation applies only to explicit reward-funding deposits.</p>}
       </div>
       <div className="form-section">
         <div className="section-label">Pair</div>
@@ -244,7 +246,9 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
           <h3>{prepared.review.name} · ${prepared.review.symbol}</h3>
           <p className="notice">Venue: {prepared.review.venue === "pumpfun" ? "Pump.fun" : "StonkFun"}. Pair: {prepared.review.symbol} / {prepared.review.quoteSymbol}. Allocation: {prepared.review.allocation.topblastPercent}% rewards, {prepared.review.allocation.creatorPercent}% creator retained, {prepared.review.allocation.protocolPercent}% protocol.</p>
           {prepared.review.venue === "pumpfun" && <p className="notice">Shown SOL cost is the simulated debit for network fees and account creation. No initial buy. Creator fees follow Pump.fun’s schedule. TopBlast rewards require a separate creator deposit.</p>}
-          <p className="notice">Network: Solana mainnet. Fee payer: <span className="mono">{wallet?.address}</span>. {prepared.review.venue === "pumpfun" ? "Estimated SOL debit" : "Payment"}: {prepared.payment.sol ?? prepared.payment.lamports ?? "See wallet"} {prepared.payment.sol !== undefined ? "SOL" : "lamports"}. {prepared.review.venue === "pumpfun" ? "Launch program" : "Recipient"}: <span className="mono">{prepared.payment.recipient ?? "Shown by your wallet"}</span>. Quote expires: {prepared.expiresAt ? new Date(prepared.expiresAt).toLocaleTimeString() : "about 90 seconds after preparation"}.</p>
+          {prepared.raw?.creationMethod === "stonk_launchlab" && <p className="notice">StonkFun standard launch through its published LaunchLab configuration. Shown SOL cost covers simulated network fees and account rent, not an initial buy or reward funding. Stonk’s token listing may take time to appear.</p>}
+          {prepared.raw?.venueFees && <p className="notice">Venue trading fees: {((Number(prepared.raw.venueFees.protocolRate) + Number(prepared.raw.venueFees.platformRate) + Number(prepared.raw.venueFees.creatorRate)) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% total, including {(Number(prepared.raw.venueFees.creatorRate) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% creator fee. These are separate from the TopBlast deposit allocation.</p>}
+          <p className="notice">Network: Solana mainnet. Fee payer: <span className="mono">{wallet?.address}</span>. Estimated SOL debit: {prepared.payment.sol ?? prepared.payment.lamports ?? "See wallet"} {prepared.payment.sol !== undefined ? "SOL" : "lamports"}. Launch program: <span className="mono">{prepared.payment.recipient ?? "Shown by your wallet"}</span>. Quote expires: {prepared.expiresAt ? new Date(prepared.expiresAt).toLocaleTimeString() : "about 90 seconds after preparation"}.</p>
           <button type="button" className="button" disabled={busy} onClick={signAndSubmit}>Confirm in wallet</button> <button type="button" className="button button-secondary" disabled={busy} onClick={() => setPrepared(null)}>Edit details</button>
         </div>
       )}

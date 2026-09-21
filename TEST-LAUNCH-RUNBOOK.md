@@ -45,3 +45,35 @@ transactions are public; this is not anonymous or confidential launching.
 
 Pump tracking pauses at graduation. Automatic creator-fee routing is not enabled.
 Two successful creations alone do not prove the reward cycle or public readiness.
+
+## Stonk integration update, September 21
+
+Stonk retired `/launches/prepare` and `/launches/submit` for new launches.
+Its official OpenAPI now documents `/launchlab/pricing?quoteMint=...` as the
+supported direct-build path, with automatic Stonk adoption when its exact shape
+and platform are used. New launches use the official Raydium SDK instruction,
+Stonk's pinned standard platform and its current onchain curve rule. The current
+rule requires Token-2022 without a transfer-fee extension. This is not a new venue
+or a TopBlast-owned curve. Legacy payment receipts retain their original recovery path.
+
+The browser generates and holds the new mint signer, and the creator wallet signs
+the same reviewed message. The server stores the receipt before broadcasting.
+Retries reuse identical signed bytes, never another payment or a new blockhash.
+Stonk's listing/adoption can lag finalized creation; tracker registration does not
+depend on that listing. Trading fees come from verified onchain configuration, not
+the retired fee-tier dropdown. Reward funding is still an explicit STONK deposit.
+
+Read-only mainnet verification, no database writes or signatures:
+
+```sh
+pnpm exec tsx scripts/verify-stonk-readonly.ts CREATOR_PUBLIC_ADDRESS
+```
+
+On September 21, this builder passed mainnet simulation at slot `449127862`
+using creator `9J2PyezDKDeF3rr1W3jdKTXkT5nTuBCTgqxiDDjPfpxq` and a random public
+mint without a known key. Simulated debit: `8696800` lamports (`0.0086968 SOL`).
+This is an estimate, NOT a transaction receipt or proof of a real launch. Prepare
+a fresh quote in the browser before approval. No new migration or secret is needed.
+
+Official contract: https://www.stonkfun.xyz/api/public/v1/openapi.json
+SDK: https://github.com/raydium-io/raydium-sdk-V2

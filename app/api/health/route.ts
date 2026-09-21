@@ -11,6 +11,8 @@ export async function GET() {
   const readiness = runtimeReadiness();
   let databaseReachable = false;
   let stonkPairReady = false;
+  let stonkCreationReady = false;
+  let stonkCreationError = "Stonk creation configuration has not been verified";
   let treasuryRpcReachable = false;
   let treasurySol: number | null = null;
   let workerFresh = false;
@@ -31,10 +33,14 @@ export async function GET() {
   }
   try {
     const mint = process.env.STONK_QUOTE_MINT ?? "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx";
-    const pair = await new StonkFunAdapter().getPair(mint);
+    const adapter = new StonkFunAdapter();
+    const pair = await adapter.getPair(mint);
     stonkPairReady = Boolean(pair?.launchable && pair.launchLabReady !== false);
-  } catch {
-    stonkPairReady = false;
+    await adapter.getCreationConfig(mint);
+    stonkCreationReady = true;
+    stonkCreationError = "";
+  } catch (error) {
+    stonkCreationError = error instanceof Error ? error.message : "Stonk creation configuration unavailable";
   }
   try { pumpPairReady = await pumpCreationAvailable(); } catch { pumpPairReady = false; }
   if (readiness.treasury && process.env.TOPBLAST_TREASURY_ADDRESS) {
@@ -46,7 +52,7 @@ export async function GET() {
       treasuryRpcReachable = false;
     }
   }
-  const stonkLaunchReady = readiness.launchReady && databaseReachable && stonkPairReady && treasuryRpcReachable;
+  const stonkLaunchReady = readiness.launchReady && databaseReachable && pumpSchemaReady && stonkPairReady && stonkCreationReady && treasuryRpcReachable;
   const pumpEnabled = process.env.PUMPFUN_ENABLED === "true";
   const pumpLaunchReady = readiness.launchReady && databaseReachable && pumpSchemaReady && pumpPairReady && pumpEnabled && treasuryRpcReachable;
   const ready = stonkLaunchReady || pumpLaunchReady;
@@ -57,7 +63,10 @@ export async function GET() {
     ready,
     launchReady: ready,
     venues: {
-      stonkfun: { launchReady: stonkLaunchReady, pairReady: stonkPairReady, rewardAsset: "STONK", fundingMode: "creator_deposit" },
+      stonkfun: { launchReady: stonkLaunchReady, pairReady: stonkPairReady, creationReady: stonkCreationReady,
+        creationMethod: "stonk_launchlab", rewardAsset: "STONK", fundingMode: "creator_deposit",
+        blockers: [...readiness.missing, !readiness.launchesEnabled && "LAUNCHES_ENABLED is false", !databaseReachable && "Database unavailable",
+          !pumpSchemaReady && "Launch metadata migration required", !stonkPairReady && "STONK pair unavailable", !stonkCreationReady && stonkCreationError, !treasuryRpcReachable && "Treasury RPC check incomplete"].filter(Boolean) },
       pumpfun: {
         launchReady: pumpLaunchReady, pairReady: pumpPairReady, schemaReady: pumpSchemaReady,
         enabled: pumpEnabled, rewardAsset: "WSOL", fundingMode: "creator_deposit", graduationSupported: false,
@@ -79,6 +88,8 @@ export async function GET() {
       databaseConfigured: readiness.database,
       databaseReachable,
       stonkPairReady,
+      stonkCreationReady,
+      stonkCreationError,
       pumpEnabled: process.env.PUMPFUN_ENABLED === "true" && pumpSchemaReady,
       pumpPairReady,
       pumpSchemaReady,

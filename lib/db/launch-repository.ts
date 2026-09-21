@@ -34,6 +34,8 @@ export async function createLaunchDraft(draft: LaunchDraft, signedQuote: string,
   const launchId = String(data.id);
   const { error: configError } = await db.from("launch_configs").insert({
     launch_id: launchId,
+    // Legacy schema compatibility only. New direct launches display the verified
+    // venue rates in their review, never this old selectable fee-tier label.
     fee_tier: draft.feeTier,
     topblast_percent: draft.allocation.topblastPercent,
     creator_percent: draft.allocation.creatorPercent,
