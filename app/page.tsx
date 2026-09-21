@@ -2,6 +2,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { PlatformStatus } from "@/components/platform-status";
 import { BlastExample } from "@/components/blast-example";
+import { VenueBadge } from "@/components/venue-badge";
 
 export default function Home() {
   return (
@@ -11,21 +12,22 @@ export default function Home() {
         <div className="eyebrow">THE LAUNCHPAD LAYER FOR TOP BLASTERS</div>
         <div className="hero-grid">
           <div>
-            <Image className="hero-mark" src="/topblast-mark.png" alt="TopBlast" width={92} height={92} priority />
+            <Image className="hero-mark" src="/topblast-venues.png" alt="TopBlast" width={92} height={92} priority />
             <h1>LAUNCH WITH<br /><span>TOPBLAST.</span></h1>
             <p className="hero-copy">Bought in. Price dropped. Still holding? TopBlast is designed to share funded rewards with verified buyers below their entry.</p>
             <div className="hero-actions">
               <Link className="button" href="/launch">Launch token</Link>
               <Link className="button button-secondary" href="/test">Test without funds</Link>
             </div>
-            <p className="microcopy">StonkFun underneath. TopBlast on top. Free rehearsal available now.</p>
+            <div className="venue-row hero-venues"><small>Launch through</small><VenueBadge venue="stonkfun" /><VenueBadge venue="pumpfun" /></div>
+            <p className="microcopy">Your venue underneath. TopBlast on top. Free rehearsal available now.</p>
           </div>
           <BlastExample />
         </div>
       </section>
       <section className="positioning">
         <div className="shell position-grid">
-          <div><span>STONKFUN</span><strong>Launch + liquidity infrastructure.</strong></div>
+          <div><div className="venue-row"><VenueBadge venue="stonkfun" /><VenueBadge venue="pumpfun" /></div><strong>Launch + liquidity infrastructure.</strong></div>
           <div><span>OUR PLATFORM</span><strong>TopBlast reward infrastructure.</strong></div>
           <div><span>CREATOR</span><strong>Sets the reward allocation.</strong></div>
           <div><span>HOLDER</span><strong>Must qualify at each snapshot.</strong></div>

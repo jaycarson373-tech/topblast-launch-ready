@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Keypair, Transaction } from "@solana/web3.js";
 import { paymentSignatureFromTransaction } from "@/lib/solana/transaction-signature";
 import { getWallets } from "@wallet-standard/app";
+import { VenueBadge } from "@/components/venue-badge";
 
 const STONK_MINT = process.env.NEXT_PUBLIC_STONK_QUOTE_MINT ?? "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx";
 
@@ -203,10 +204,11 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
   }
 
   return (
-    <form className="panel" onSubmit={(event) => { event.preventDefault(); void prepare(new FormData(event.currentTarget)); }}>
+    <form className={`panel launch-form venue-theme-${venue}`} onSubmit={(event) => { event.preventDefault(); void prepare(new FormData(event.currentTarget)); }}>
       {testMode && <section className="form-section"><div className="section-label">Hidden acceptance launch</div><p className="notice">Real mainnet costs. Hidden on TopBlast, not private onchain or at the venue. Tracking and accounting remain enabled. No token is created until you approve the reviewed transaction in your wallet.</p><div className="field"><label htmlFor="operator-token">Operator access token</label><input id="operator-token" type="password" autoComplete="off" value={operatorToken} disabled={busy || Boolean(prepared)} onChange={(event) => { setOperatorToken(event.target.value); setRuntime(null); }} /></div><p className="notice">Use the existing admin access token, never a wallet private key. It stays in memory and is not saved by this page.</p><button type="button" className="button button-secondary" disabled={busy || !operatorToken || Boolean(prepared)} onClick={() => void checkTestAccess()}>Check test access</button></section>}
       {runtime && !venueReady && <div className="error"><strong>{venue === "pumpfun" ? "Pump.fun activation pending." : "Launch activation pending."}</strong> The transaction button stays locked until infrastructure checks pass. No payment can be submitted here.<ul>{(venue === "pumpfun" ? runtime.pumpBlockers : runtime.stonkBlockers ?? []).map((blocker) => <li key={blocker}>{blocker}</li>)}</ul></div>}
       <fieldset disabled={busy || Boolean(prepared) || Boolean(receipt)}>
+      <div className="launch-venue-hint"><VenueBadge venue={venue} /><span>{venue === "pumpfun" ? "SOL pair · WSOL rewards" : "STONK pair · STONK rewards"}</span></div>
       <div className="form-grid">
         <div className="field full"><label htmlFor="venue">Launch venue</label><select id="venue" value={venue} onChange={(event) => setVenue(event.target.value as typeof venue)}><option value="stonkfun">StonkFun · STONK pair</option><option value="pumpfun">Pump.fun · SOL pair</option></select>{venue === "pumpfun" && <p className="notice">Regular Pump.fun token with TopBlast deposit-funded rewards paid in WSOL. Pump.fun native holder rewards are separate and are not enabled. Tracking pauses at graduation until the new market is verified.</p>}</div>
         <div className="field"><label htmlFor="name">Token name</label><input id="name" name="name" required maxLength={32} placeholder="Top Coin" /></div>
@@ -242,6 +244,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
       {prepared && !receipt && (
         <div className="panel" style={{ background: "#fff5d7" }}>
           <div className="section-label">Transaction review</div>
+          <div className="token-venue"><VenueBadge venue={prepared.review.venue} /></div>
           {testMode && <p className="notice"><strong>TEST LAUNCH · HIDDEN FROM PUBLIC TOPBLAST PAGES</strong><br />This is a real Solana mainnet transaction, not a simulation-only launch.</p>}
           <h3>{prepared.review.name} · ${prepared.review.symbol}</h3>
           <p className="notice">Venue: {prepared.review.venue === "pumpfun" ? "Pump.fun" : "StonkFun"}. Pair: {prepared.review.symbol} / {prepared.review.quoteSymbol}. Allocation: {prepared.review.allocation.topblastPercent}% rewards, {prepared.review.allocation.creatorPercent}% creator retained, {prepared.review.allocation.protocolPercent}% protocol.</p>
@@ -257,7 +260,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
       {result && <div className={result.trackerStatus === "active" ? "success" : "error"}><strong>{result.trackerStatus === "active" ? "Launch complete. TopBlast tracking active." : "Token launched. Tracker registration needs recovery."}</strong><br />Mint: {result.mint}<br />Pool: {result.pool}<br />Signature: {result.signature}{result.trackerStatus !== "active" && <><br />Use the saved payment status recovery to retry tracking. No second payment is required.</>}</div>}
       <div className="form-footer">
         <p className="notice">Your wallet signs the reviewed launch transaction. TopBlast never receives your private key.</p>
-        {!prepared && !receipt && !result && <button className="button" disabled={busy || total !== 100 || !venueReady}>{busy ? "Preparing..." : !venueReady ? "Activation pending" : wallet ? venue === "pumpfun" ? "Launch on Pump.fun" : "Launch on STONK" : "Connect and launch"}</button>}
+        {!prepared && !receipt && !result && <button className="button venue-button" disabled={busy || total !== 100 || !venueReady}>{busy ? "Preparing..." : !venueReady ? "Activation pending" : wallet ? venue === "pumpfun" ? "Launch on Pump.fun" : "Launch on STONK" : "Connect and launch"}</button>}
       </div>
       {!wallet && <div className="wallet-picker"><select aria-label="Wallet" value={selectedWallet} onChange={(event) => setSelectedWallet(event.target.value)}>{wallets.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select><button className="button button-secondary" type="button" onClick={() => void connect().catch((caught) => setError(caught instanceof Error ? caught.message : "Wallet connection failed"))}>Connect wallet</button></div>}
       {wallet && <p className="notice">Connected: {walletName} · <span className="mono">{wallet.address}</span></p>}

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { VenueBadge } from "@/components/venue-badge";
 import { advanceRehearsal, newRehearsal, REHEARSAL_KEY, rehearsalAmount, rehearsalPlan, rehearsalSchema, runRehearsal, type RehearsalState } from "@/lib/testing/rehearsal";
 
 const steps = ["Create fictional launch", "Replay sample buys", "Add sample funding", "Snapshot + allocate", "Interrupt sample payouts", "Recover + show sample proof"];
@@ -63,8 +64,9 @@ export function Rehearsal() {
   return <>
     <div className="test-disclaimer"><strong>SIMULATION ONLY · NOT DEVNET</strong><p>StonkFun’s published API does not document a devnet launch endpoint. This rehearsal never calls launch, funding, or payout APIs. All amounts, wallets, slots, and payment states below are fictional. It does not establish live launch or reward readiness.</p></div>
     <div className="test-grid">
-      <section className="panel test-controls" aria-label="Rehearsal controls">
+      <section className={`panel test-controls venue-theme-${state.venue}`} aria-label="Rehearsal controls">
         <div className="eyebrow">01 / CHOOSE A SCENARIO</div><h2>BOUGHT IN.<br />WHAT NEXT?</h2>
+        <div className="creator-venue"><VenueBadge venue={state.venue} /></div>
         <div className="field"><label htmlFor="test-venue">Sample launch venue</label><select id="test-venue" value={state.venue} onChange={(event) => changeScenario({ venue: event.target.value as RehearsalState["venue"] })}><option value="stonkfun">StonkFun · STONK</option><option value="pumpfun">Pump.fun · SOL / WSOL rewards</option></select></div>
         {state.venue === "pumpfun" && <p className="notice">Pump.fun mode: ordinary SOL-paired coin. An explicit creator deposit wraps SOL into WSOL for the reward and protocol portions. No swap. Native Pump holder rewards are not enabled. Production tracking pauses at graduation.</p>}
         <p>Holder A buys 10 tokens at 10 {quote} and 10 at 20 {quote}. Weighted entry: 15 {quote}. Holder B buys 10 at 10 {quote}. These are fictional teaching amounts, not live market prices.</p>

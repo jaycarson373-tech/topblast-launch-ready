@@ -4,6 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useEffect, useState } from "react";
 import { PriceChart } from "@/components/price-chart";
+import { VenueBadge } from "@/components/venue-badge";
 
 const display = (value: unknown, fallback = "Unavailable") => value === null || value === undefined ? fallback : String(value);
 const money = (value: unknown) => typeof value === "number" ? new Intl.NumberFormat("en", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 2 }).format(value) : "Unavailable";
@@ -42,6 +43,7 @@ export function TokenPage({ address }: { address: string }) {
   return <main>
     <section className="token-hero"><div className="shell token-hero-grid"><div><span className="status-pill">{status}</span><h1>{String(launch.name)}<span>${String(launch.symbol)} · {String(launch.symbol)} / {String(launch.quote_symbol)}</span></h1><p className="mono">{address}</p></div>{Boolean(launch.image_url) && <Image unoptimized className="token-logo-large" width={120} height={120} src={String(launch.image_url)} alt={`${String(launch.name)} token`} />}</div></section>
     <div className="shell page">
+      <div className="token-venue"><VenueBadge venue={String(launch.venue)} /></div>
       <div className="token-actions"><a className="button" href={launch.venue === "pumpfun" ? `https://pump.fun/coin/${address}` : `https://www.stonkfun.xyz/token/${address}`} target="_blank" rel="noreferrer">Trade on {venueName}</a><Link className="button button-secondary" href={`/token/${address}/proof`}>View public proof</Link></div>
       <div className="stats-grid"><div className="metric"><span>Finalized price</span><strong>{latest ? `${atoms(latest.price_quote_atoms_per_token, quoteDecimals)} ${String(launch.quote_symbol)}` : "Unavailable"}</strong></div><div className="metric"><span>Market cap</span><strong>{money(launch.market_cap_usd)}</strong></div><div className="metric"><span>24h volume</span><strong>{money(launch.volume_24h_usd)}</strong></div><div className="metric"><span>Liquidity</span><strong>{money(launch.liquidity_usd)}</strong></div></div>
       <PriceChart points={data.prices} decimals={quoteDecimals} quoteSymbol={String(launch.quote_symbol)} />

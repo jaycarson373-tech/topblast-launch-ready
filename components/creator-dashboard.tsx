@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { getWallets } from "@wallet-standard/app";
 import { FundingPanel } from "@/components/funding-panel";
+import { VenueBadge } from "@/components/venue-badge";
 
 interface Account { address:string }
 interface Wallet { name:string; features:Record<string,unknown> }
@@ -14,6 +15,7 @@ export function CreatorDashboard(){
     {error && <div className="error">{error}</div>}
     {wallet && (launches.length ? <div className="cards">{launches.map((launch) => <div className="token-card" key={String(launch.id)}>
       <div className="token-card-head"><h3>{String(launch.name)}</h3><span className="status-pill">{String(launch.status)} · {String(launch.tracker_status ?? "tracker pending")}</span></div>
+      <div className="creator-venue"><VenueBadge venue={String(launch.venue)} /></div>
       {launch.is_test === true && <p className="notice"><strong>TEST LAUNCH · NOT PUBLICLY LISTED</strong><br />Hidden from TopBlast Explore and token/proof pages. Onchain activity and venue listings remain public.</p>}
       <div className="metrics">
         <div className="metric"><span>Ticker</span><strong>${String(launch.symbol)}</strong></div>
