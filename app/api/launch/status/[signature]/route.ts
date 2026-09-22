@@ -4,6 +4,7 @@ import { StonkFunApiError } from "@/lib/venue/stonkfun-adapter";
 import { launchVenue } from "@/lib/venue/registry";
 import { getAdminDb } from "@/lib/db/server";
 import { submitBoundLaunch } from "@/lib/venue/launch-submission-service";
+import { failedLaunchStatus } from "@/lib/venue/failed-launch-status";
 
 export const runtime = "nodejs";
 
@@ -12,9 +13,11 @@ export async function GET(request: Request, context: { params: Promise<{ signatu
     const { signature } = await context.params;
     const launchId = new URL(request.url).searchParams.get("launchId");
     if (!launchId) return NextResponse.json({ error: "launchId is required" }, { status: 400 });
-    await verifyLaunchPayment(launchId, signature);
-    const { data: launch, error: launchError } = await getAdminDb().from("launches").select("venue").eq("id", launchId).single();
+    const { data: launch, error: launchError } = await getAdminDb().from("launches").select("venue,status,payment_signature,venue_payload").eq("id", launchId).single();
     if (launchError) throw launchError;
+    if (!launch.payment_signature || launch.payment_signature !== signature) throw new Error("Payment signature does not belong to this launch");
+    if (launch.status === "failed") return NextResponse.json(await failedLaunchStatus(launchId, signature, launch.venue_payload?.reason));
+    await verifyLaunchPayment(launchId, signature);
     let result;
     try { result = await launchVenue(launch.venue).getLaunch(signature); }
     catch (error) {

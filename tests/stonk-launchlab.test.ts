@@ -56,7 +56,7 @@ beforeEach(() => {
     if (method === "getGenesisHash") return genesis;
     if (method === "getMultipleAccounts") return { value: accounts() };
     if (method === "getAccountInfo") return { value: null };
-    if (method === "getLatestBlockhash") return { value: { blockhash: address(), lastValidBlockHeight: 200 } };
+    if (method === "getLatestBlockhash") return { context: { slot: 100 }, value: { blockhash: address(), lastValidBlockHeight: 200 } };
     if (method === "getBalance") return { context: { slot: 100 }, value: 200_000_000 };
     if (method === "simulateTransaction") return { context: { slot: 100 }, value: { err: null, accounts: [{ lamports: 191_303_200 }] } };
     if (method === "getTransaction") return null;
@@ -82,6 +82,15 @@ describe("Stonk's supported LaunchLab flow, simulated RPC only", () => {
     expect(prepared.raw).toMatchObject({ baseTokenProgram: TOKEN_2022_PROGRAM, transferFeeEnabled: false, mintSignerRequired: true });
     expect(prepared.payment.lamports).toBe("8696800");
     expect(mocks.insert).toHaveBeenCalledOnce(); expect(mocks.broadcast).not.toHaveBeenCalled();
+    expect(mocks.rpc).toHaveBeenCalledWith("getLatestBlockhash", [{ commitment: "confirmed" }]);
+    expect(mocks.rpc).toHaveBeenCalledWith("simulateTransaction", [prepared.paymentTransaction, expect.objectContaining({ commitment: "confirmed", minContextSlot: 100 })]);
+    expect(new Date(prepared.expiresAt!).getTime() - Date.now()).toBeLessThanOrEqual(30_000);
+  });
+  it("does not offer a stale blockhash after a slow simulation", async () => {
+    const original = mocks.rpc.getMockImplementation()!;
+    mocks.rpc.mockImplementation(async (...args) => args[0] === "getBlockHeight" ? 180 : original(...args));
+    await expect(prepareStonkLaunch(draft(), await verifyStonkPricing(pricing(), quoteMint))).rejects.toThrow("took too long");
+    expect(mocks.insert).not.toHaveBeenCalled(); expect(mocks.broadcast).not.toHaveBeenCalled();
   });
   it("rejects stale pricing, substituted platforms and the wrong quote", async () => {
     const stale = pricing(); stale.prices.observedAt = new Date(Date.now() - 240_000).toISOString();

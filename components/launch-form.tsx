@@ -24,6 +24,7 @@ interface SignTransactionFeature {
 }
 const RECEIPT_KEY = "topblast-launch-receipt-v1";
 interface Receipt { launchId: string; paymentSignature: string }
+interface LaunchStatus { status: string; mint?: string; pool?: string; signature?: string; paymentSignature?: string; trackerStatus?: string; retrySafe?: boolean; failureMessage?: string }
 interface Prepared {
   raw?: { mintSignerRequired?: boolean; creationMethod?: string; venueFees?: { denominator: string; protocolRate: string; platformRate: string; creatorRate: string } };
   logo: string;
@@ -57,6 +58,11 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
   const allocation = useMemo(() => creatorShareToAllocation(creatorShare), [creatorShare]);
   const [prepared, setPrepared] = useState<Prepared | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const receiptRef = useRef<Receipt | null>(null);
+  receiptRef.current = receipt;
+  const statusRequest = useRef(false);
+  const [failure, setFailure] = useState<{ message: string; retrySafe: boolean } | null>(null);
+  const [now, setNow] = useState(Date.now());
   const [logo, setLogo] = useState("");
   const [imageName, setImageName] = useState("");
   const [imageLoading, setImageLoading] = useState(false);
@@ -129,12 +135,19 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
   }, [walletObject, wallet?.address, prepared, receipt]);
 
   useEffect(() => {
-    if (!receipt) return;
+    if (!receipt || failure) return;
     const timer = window.setInterval(() => { void checkStatus(true); }, 8_000);
     return () => window.clearInterval(timer);
   // checkStatus deliberately follows the current receipt value.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [receipt?.launchId, receipt?.paymentSignature]);
+  }, [receipt?.launchId, receipt?.paymentSignature, failure]);
+
+  useEffect(() => {
+    if (!prepared || receipt) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [prepared, receipt]);
 
   async function connect() {
     setError("");
@@ -170,8 +183,14 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
     finally { setBusy(false); }
   }
 
-  function complete(body: Record<string, string>) {
-    if (body.status !== "completed") throw new Error(body.status === "failed" ? "The venue reports a failed launch. Keep this receipt and verify the payment before starting again." : "The launch is still processing. Use Check launch status; do not pay again.");
+  function complete(body: LaunchStatus) {
+    if (body.status === "failed") {
+      setFailure({ message: body.failureMessage ?? "Launch failed. Check status to verify the saved transaction before trying again.", retrySafe: body.retrySafe === true });
+      setError("");
+      return;
+    }
+    if (body.status !== "completed") { setError(""); return; }
+    setFailure(null);
     setResult({ mint: String(body.mint), pool: String(body.pool), signature: String(body.signature ?? body.paymentSignature), trackerStatus: String(body.trackerStatus ?? "pending") });
     setPrepared(null);
     if (body.trackerStatus === "active") {
@@ -181,15 +200,30 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
   }
 
   async function checkStatus(quiet = false) {
-    if (!receipt) return;
+    if (!receipt || statusRequest.current) return;
+    statusRequest.current = true;
     if (!quiet) setBusy(true); setError("");
     try {
       const response = await fetch(`/api/launch/status/${encodeURIComponent(receipt.paymentSignature)}?launchId=${encodeURIComponent(receipt.launchId)}`, { cache: "no-store" });
       const body = await response.json();
+      if (receiptRef.current?.paymentSignature !== receipt.paymentSignature) return;
       if (!response.ok) throw new Error(body.error ?? "Could not verify payment status. Keep this receipt and do not pay again.");
       complete(body);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Status check failed"); }
-    finally { if (!quiet) setBusy(false); }
+    finally { statusRequest.current = false; if (!quiet) setBusy(false); }
+  }
+
+  function startFreshReview() {
+    if (!receipt || !failure?.retrySafe || busy || statusRequest.current) return;
+    try {
+      // Archive public identifiers before clearing the pending pointer. The
+      // immutable server receipt and creator history remain available too.
+      localStorage.setItem(`${receiptKey}-archive-${receipt.launchId}`, JSON.stringify(receipt));
+      localStorage.removeItem(receiptKey);
+    } catch { setError("Could not save your receipt. Keep a copy and allow browser storage before starting again."); return; }
+    receiptRef.current = null;
+    setReceipt(null); setFailure(null); setPrepared(null); setResult(null); setError("");
+    mintSigner.current = null;
   }
 
   async function signAndSubmit() {
@@ -274,11 +308,12 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
           {prepared.review.venue === "pumpfun" && <p className="notice">Shown SOL cost is the simulated debit for network fees and account creation. No initial buy. Creator fees follow Pump.fun’s schedule. TopBlast rewards require a separate creator deposit.</p>}
           {prepared.raw?.creationMethod === "stonk_launchlab" && <p className="notice">StonkFun standard launch through its published LaunchLab configuration. Shown SOL cost covers simulated network fees and account rent, not an initial buy or reward funding. Stonk’s token listing may take time to appear.</p>}
           {prepared.raw?.venueFees && <p className="notice">Venue trading fees: {((Number(prepared.raw.venueFees.protocolRate) + Number(prepared.raw.venueFees.platformRate) + Number(prepared.raw.venueFees.creatorRate)) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% total, including {(Number(prepared.raw.venueFees.creatorRate) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% creator fee. These are separate from the TopBlast deposit allocation.</p>}
-          <p className="notice">Network: Solana mainnet. Fee payer: <span className="mono">{wallet?.address}</span>. Estimated SOL debit: {prepared.payment.sol ?? prepared.payment.lamports ?? "See wallet"} {prepared.payment.sol !== undefined ? "SOL" : "lamports"}. Launch program: <span className="mono">{prepared.payment.recipient ?? "Shown by your wallet"}</span>. Quote expires: {prepared.expiresAt ? new Date(prepared.expiresAt).toLocaleTimeString() : "about 90 seconds after preparation"}.</p>
-          <button type="button" className="button" disabled={busy} onClick={signAndSubmit}>Confirm in wallet</button> <button type="button" className="button button-secondary" disabled={busy} onClick={() => setPrepared(null)}>Edit details</button>
+          <p className="notice">Network: Solana mainnet. Fee payer: <span className="mono">{wallet?.address}</span>. Estimated SOL debit: {prepared.payment.sol ?? prepared.payment.lamports ?? "See wallet"} {prepared.payment.sol !== undefined ? "SOL" : "lamports"}. Launch program: <span className="mono">{prepared.payment.recipient ?? "Shown by your wallet"}</span>.</p>
+          <p className="notice">{prepared.expiresAt && new Date(prepared.expiresAt).getTime() <= now ? "Review expired. Prepare a fresh review before signing." : `Estimated signing window: ${prepared.expiresAt ? Math.max(0, Math.ceil((new Date(prepared.expiresAt).getTime() - now) / 1000)) + " seconds" : "limited"}. Review now, then approve promptly in your wallet. Solana block height determines actual expiry.`}</p>
+          <button type="button" className="button" disabled={busy || Boolean(prepared.expiresAt && new Date(prepared.expiresAt).getTime() <= now)} onClick={signAndSubmit}>Confirm in wallet</button> <button type="button" className="button button-secondary" disabled={busy} onClick={() => setPrepared(null)}>Edit / refresh review</button>
         </div>
       )}
-      {receipt && <div className="panel" style={{ marginTop: 20 }} role="status"><h3>Payment verification pending</h3><p className="notice">Keep this receipt. Check status to recover after a delay or refresh. Do not make another payment.</p><p className="mono">Launch: {receipt.launchId}<br />Payment: {receipt.paymentSignature}</p><button type="button" className="button" disabled={busy} onClick={() => void checkStatus()}>Check launch status</button></div>}
+      {receipt && <div className="panel" style={{ marginTop: 20 }} role="status"><h3>{failure ? "Launch did not complete" : result ? "Token launched. Tracking recovery pending" : "Launch confirmation pending"}</h3><p className="notice">{failure?.message ?? "Keep this receipt. Check status to recover after a delay or refresh. Do not make another payment."}</p><p className="mono">Launch: {receipt.launchId}<br />Transaction: <a href={`https://solscan.io/tx/${encodeURIComponent(receipt.paymentSignature)}`} target="_blank" rel="noreferrer">{receipt.paymentSignature}</a></p><button type="button" className="button" disabled={busy} onClick={() => void checkStatus()}>Check launch status</button>{failure?.retrySafe && <> <button type="button" className="button button-secondary" disabled={busy} onClick={startFreshReview}>Save receipt and start a fresh review</button></>}</div>}
       {error && <div className="error">{error}</div>}
       {result && <div className={result.trackerStatus === "active" ? "success" : "error"}><strong>{result.trackerStatus === "active" ? "Launch complete. TopBlast tracking active." : "Token launched. Tracker registration needs recovery."}</strong><br />Mint: {result.mint}<br />Pool: {result.pool}<br />Signature: {result.signature}{result.trackerStatus !== "active" && <><br />Use the saved payment status recovery to retry tracking. No second payment is required.</>}</div>}
       <div className="form-footer">

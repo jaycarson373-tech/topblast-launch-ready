@@ -3,6 +3,7 @@ import { PUMP_SDK, bondingCurvePda, creatorVaultPda } from "@/lib/solana/pump-sd
 import { ComputeBudgetProgram, PublicKey, Transaction } from "@solana/web3.js";
 import { getAdminDb } from "@/lib/db/server";
 import { solanaRpc } from "@/lib/solana/rpc";
+import { launchReviewExpiry } from "@/lib/solana/launch-expiry";
 import { PUMP_SOL_MINT, PUMP_PROGRAM_ID, readPumpCurve, pumpCreationAvailable, assertPumpMainnet } from "@/lib/solana/pumpfun";
 import { broadcastSignedCheckedTransfer } from "@/lib/solana/checked-transfers";
 import { paymentSignatureFromTransaction } from "@/lib/solana/transaction-signature";
@@ -35,21 +36,22 @@ export class PumpFunAdapter implements LaunchVenueAdapter {
     const { error } = await getAdminDb().from("launch_metadata").insert({ id: metadataId, metadata, image_data: input.logo });
     if (error) throw error;
     const create = await PUMP_SDK.createV2Instruction({ mint, name: input.name, symbol: input.symbol, uri, creator, user: creator, mayhemMode: false, cashback: false, holderReward: false });
-    const latest = await solanaRpc<{ value: { blockhash: string; lastValidBlockHeight: number } }>("getLatestBlockhash", [{ commitment: "finalized" }]);
+    const latest = await solanaRpc<{ context: { slot: number }; value: { blockhash: string; lastValidBlockHeight: number } }>("getLatestBlockhash", [{ commitment: "confirmed" }]);
+    if (!Number.isSafeInteger(latest.context?.slot)) throw new Error("Launch blockhash context unavailable");
     const transaction = new Transaction({ feePayer: creator, recentBlockhash: latest.value.blockhash })
       .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }), create);
     const wire = transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64");
-    const before = await solanaRpc<{ context: { slot: number }; value: number }>("getBalance", [input.creatorWallet, { commitment: "finalized" }]);
+    const before = await solanaRpc<{ context: { slot: number }; value: number }>("getBalance", [input.creatorWallet, { commitment: "confirmed", minContextSlot: latest.context.slot }]);
     if (!Number.isSafeInteger(before.value) || !Number.isSafeInteger(before.context?.slot)) throw new Error("Cannot verify creator balance for simulation");
-    const simulated = await solanaRpc<{ context: { slot: number }; value: { err: unknown; accounts?: Array<{ lamports: number } | null> } }>("simulateTransaction", [wire, { encoding: "base64", commitment: "finalized", minContextSlot: before.context.slot, sigVerify: false, accounts: { encoding: "base64", addresses: [input.creatorWallet] } }]);
-    if (simulated.value.err) throw new Error(`Pump.fun creation simulation failed: ${JSON.stringify(simulated.value.err)}. Check creator SOL balance.`);
+    const simulated = await solanaRpc<{ context: { slot: number }; value: { err: unknown; accounts?: Array<{ lamports: number } | null> } }>("simulateTransaction", [wire, { encoding: "base64", commitment: "confirmed", minContextSlot: Math.max(before.context.slot, latest.context.slot), sigVerify: false, accounts: { encoding: "base64", addresses: [input.creatorWallet] } }]);
+    if (simulated.value?.err !== null) throw new Error(`Pump.fun creation simulation failed or was incomplete: ${JSON.stringify(simulated.value?.err)}. Check creator SOL balance.`);
     if (!Number.isSafeInteger(simulated.context?.slot)) throw new Error("Simulation context is unavailable");
-    const balance = await solanaRpc<{ value: number }>("getBalance", [input.creatorWallet, { commitment: "finalized", minContextSlot: simulated.context.slot }]);
+    const balance = await solanaRpc<{ value: number }>("getBalance", [input.creatorWallet, { commitment: "confirmed", minContextSlot: simulated.context.slot }]);
     const after = simulated.value.accounts?.[0]?.lamports;
     if (balance.value !== before.value) throw new Error("Creator balance changed during simulation. Prepare a fresh transaction review.");
     if (!Number.isSafeInteger(after) || after! < 0 || after! >= before.value) throw new Error("Cannot verify Pump.fun creation cost");
     const lamports = String(before.value - after!);
-    const expiresAt = new Date(Date.now() + 75_000).toISOString();
+    const expiresAt = await launchReviewExpiry(latest.value.lastValidBlockHeight);
     return { signedQuote: JSON.stringify({ venue: this.venue, mint: input.pumpMint, pool: bondingCurvePda(mint).toBase58(), metadataId, lastValidBlockHeight: latest.value.lastValidBlockHeight }), paymentTransaction: wire, payment: { lamports, sol: Number(lamports) / 1e9, recipient: PUMP_PROGRAM_ID.toBase58() }, expiresAt, raw: { fundingMode: "creator_deposit", rewardAsset: "WSOL", nativeHolderRewards: false, simulation: "passed", costDescription: "Simulated SOL debit including network fee and new account rent. No initial token purchase." } };
   }
   async submitLaunch(input: { signedQuote: string; signedTransaction: string; logo: string }): Promise<SubmittedLaunch> {

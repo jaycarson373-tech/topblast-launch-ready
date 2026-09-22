@@ -70,7 +70,7 @@ export async function applyVenueLaunch(launchId: string, result: SubmittedLaunch
   };
   const { error } = await db.from("launches").update(values).eq("id", launchId).in("status", ["prepared", "processing"]);
   if (error) throw error;
-  await db.from("launch_submission_receipts").update({ status: result.status, last_error: result.status === "failed" ? "StonkFun reported launch failure" : null, updated_at: new Date().toISOString() }).eq("launch_id", launchId);
+  await db.from("launch_submission_receipts").update({ status: result.status, last_error: result.status === "failed" ? (typeof result.raw?.reason === "string" ? result.raw.reason : "Launch transaction failed; see the saved onchain receipt") : null, updated_at: new Date().toISOString() }).eq("launch_id", launchId);
   if (completed) {
     const { data: launch, error: launchError } = await db.from("launches").select("venue,quote_mint,creator_wallet,launch_signature").eq("id", launchId).single();
     if (launchError) throw launchError;
@@ -134,7 +134,12 @@ export async function verifyLaunchQuote(launchId: string, signedQuote: string): 
   if (error) throw error;
   if (data.signed_quote_hash !== hash) throw new Error("Signed quote does not match prepared launch");
   if (!["prepared", "processing"].includes(data.status)) throw new Error(`Launch is already ${data.status}`);
-  if (data.status === "prepared" && data.quote_expires_at && new Date(data.quote_expires_at).getTime() < Date.now()) throw new Error("Launch quote expired. Prepare a fresh review before signing.");
+  // Direct creation is bound to the exact reviewed message and its onchain
+  // blockhash lifetime. Persist a late wallet signature so recovery can determine
+  // whether it landed or expired. The UI deadline must not orphan this receipt.
+  let direct = false;
+  try { const quote = JSON.parse(signedQuote); direct = quote.venue === "pumpfun" || (quote.venue === "stonkfun" && quote.method === "launchlab"); } catch { /* Upstream signed quote. */ }
+  if (!direct && data.status === "prepared" && data.quote_expires_at && new Date(data.quote_expires_at).getTime() < Date.now()) throw new Error("Launch quote expired. Prepare a fresh review before signing.");
   if (!data.payment_message_hash) throw new Error("Prepared payment message is missing");
   return { paymentMessageHash: data.payment_message_hash, creatorWallet: data.creator_wallet, isTest: data.is_test === true };
 }
@@ -179,5 +184,5 @@ export async function getBoundLaunchSubmission(launchId: string) {
 }
 
 export async function recordLaunchSubmissionError(launchId: string, message: string) {
-  await getAdminDb().from("launch_submission_receipts").update({ status: "processing", last_error: message, updated_at: new Date().toISOString() }).eq("launch_id", launchId).neq("status", "completed");
+  await getAdminDb().from("launch_submission_receipts").update({ status: "processing", last_error: message, updated_at: new Date().toISOString() }).eq("launch_id", launchId).in("status", ["prepared", "submitted", "processing"]);
 }

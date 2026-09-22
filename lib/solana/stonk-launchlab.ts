@@ -4,6 +4,7 @@ import { z } from "zod";
 import { ComputeBudgetProgram, PublicKey, Transaction } from "@solana/web3.js";
 import { getAdminDb } from "@/lib/db/server";
 import { solanaRpc } from "@/lib/solana/rpc";
+import { launchReviewExpiry } from "@/lib/solana/launch-expiry";
 import { LAUNCHLAB_PROGRAM, TOKEN_PROGRAM, TOKEN_2022_PROGRAM } from "@/lib/solana/launchlab-constants";
 import { initializeV2, initializeWithToken2022, getPdaLaunchpadAuth, getPdaLaunchpadPoolId, getPdaLaunchpadVaultId,
   getPdaLaunchpadConfigId, getPdaMetadataKey, getPdaPlatformCurveRule, getPdaPlatformAllowConfig,
@@ -117,18 +118,21 @@ export async function simulateStonkLaunch(input: LaunchDraft, verified: Awaited<
     new BN(0), new BN(0), new BN(0), pricing.curve.cpmmCreatorFeeOn,
     allowConfig,
     new PublicKey(pricing.curveRule.standard));
-  const latest = await solanaRpc<{ value: { blockhash: string; lastValidBlockHeight: number } }>("getLatestBlockhash", [{ commitment: "finalized" }]);
+  // Fresh confirmed hash for the signing window. Registration and rewards still
+  // require finalized chain data; only this unsigned preview uses confirmed.
+  const latest = await solanaRpc<{ context: { slot: number }; value: { blockhash: string; lastValidBlockHeight: number } }>("getLatestBlockhash", [{ commitment: "confirmed" }]);
+  if (!Number.isSafeInteger(latest.context?.slot)) throw new Error("Launch blockhash context unavailable");
   if (!Number.isSafeInteger(latest.value.lastValidBlockHeight)) throw new Error("Launch blockhash validity unavailable");
   const transaction = new Transaction({ feePayer: creator, recentBlockhash: latest.value.blockhash })
     .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }), create);
   const wire = transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64");
-  const before = await solanaRpc<{ context: { slot: number }; value: number }>("getBalance", [input.creatorWallet, { commitment: "finalized" }]);
+  const before = await solanaRpc<{ context: { slot: number }; value: number }>("getBalance", [input.creatorWallet, { commitment: "confirmed", minContextSlot: latest.context.slot }]);
   if (!Number.isSafeInteger(before.value) || !Number.isSafeInteger(before.context?.slot)) throw new Error("Creator balance is unavailable");
-  const simulation = await solanaRpc<{ context: { slot: number }; value: { err: unknown; accounts?: Array<{ lamports: number } | null> } }>("simulateTransaction", [wire, { encoding: "base64", commitment: "finalized", minContextSlot: before.context.slot, sigVerify: false, accounts: { encoding: "base64", addresses: [input.creatorWallet] } }]);
+  const simulation = await solanaRpc<{ context: { slot: number }; value: { err: unknown; accounts?: Array<{ lamports: number } | null> } }>("simulateTransaction", [wire, { encoding: "base64", commitment: "confirmed", minContextSlot: Math.max(before.context.slot, latest.context.slot), sigVerify: false, accounts: { encoding: "base64", addresses: [input.creatorWallet] } }]);
   if (simulation.value?.err !== null) throw new Error(`Stonk creation simulation failed or was incomplete: ${JSON.stringify(simulation.value?.err)}. No transaction was sent.`);
   if (!Number.isSafeInteger(simulation.context?.slot)) throw new Error("Simulation context is unavailable");
   const after = simulation.value.accounts?.[0]?.lamports;
-  const unchanged = await solanaRpc<{ value: number }>("getBalance", [input.creatorWallet, { commitment: "finalized", minContextSlot: simulation.context.slot }]);
+  const unchanged = await solanaRpc<{ value: number }>("getBalance", [input.creatorWallet, { commitment: "confirmed", minContextSlot: simulation.context.slot }]);
   if (unchanged.value !== before.value) throw new Error("Creator balance changed during simulation. Prepare a fresh review.");
   if (!Number.isSafeInteger(after) || after! < 0 || after! >= before.value) throw new Error("Cannot verify Stonk creation cost");
   const metadata = { id: metadataId, image_data: input.logo,
@@ -137,7 +141,7 @@ export async function simulateStonkLaunch(input: LaunchDraft, verified: Awaited<
   const prepared: PreparedLaunch = {
     signedQuote: JSON.stringify({ venue: "stonkfun", method: "launchlab", mint: input.launchMint, pool: pool.toBase58(), metadataId, lastValidBlockHeight: latest.value.lastValidBlockHeight }),
     paymentTransaction: wire, payment: { lamports, sol: Number(lamports) / 1e9, recipient: LAUNCHLAB_PROGRAM },
-    expiresAt: new Date(Date.now() + 75_000).toISOString(),
+    expiresAt: await launchReviewExpiry(latest.value.lastValidBlockHeight),
     raw: { creationMethod: "stonk_launchlab", mintSignerRequired: true, simulation: "passed", simulationSlot: simulation.context.slot,
       fundingMode: "creator_deposit", rewardAsset: "STONK", platform: pricing.platform.standard, pricing,
       baseTokenProgram: token2022 ? TOKEN_2022_PROGRAM : TOKEN_PROGRAM, transferFeeEnabled: false,

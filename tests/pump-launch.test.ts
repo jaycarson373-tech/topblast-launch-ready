@@ -20,7 +20,7 @@ beforeEach(() => {
   mocked.rpc.mockImplementation(async (method: string) => {
     if (method === "getGenesisHash") return genesis;
     if (method === "getAccountInfo") return { value: { owner: PUMP_PROGRAM_ID.toBase58(), executable: false, lamports: 1000, data: ["AA==", "base64"] } };
-    if (method === "getLatestBlockhash") return { value: { blockhash: publicKey(), lastValidBlockHeight: 200 } };
+    if (method === "getLatestBlockhash") return { context: { slot: 100 }, value: { blockhash: publicKey(), lastValidBlockHeight: 200 } };
     if (method === "getBalance") { balanceCalls++; return { context: { slot: 100 }, value: 1_000_000_000 }; }
     if (method === "simulateTransaction") return { context: { slot: 100 }, value: { err: null, accounts: [{ lamports: 990_000_000 }] } };
     if (method === "getTransaction") return null;
@@ -59,6 +59,8 @@ describe("Pump.fun preparation and recovery, simulated RPC", () => {
     expect(prepared.raw.nativeHolderRewards).toBe(false);
     expect(balanceCalls).toBe(2);
     expect(mocked.broadcast).not.toHaveBeenCalled();
+    expect(mocked.rpc).toHaveBeenCalledWith("getLatestBlockhash", [{ commitment: "confirmed" }]);
+    expect(mocked.rpc).toHaveBeenCalledWith("simulateTransaction", [prepared.paymentTransaction, expect.objectContaining({ commitment: "confirmed", minContextSlot: 100 })]);
   });
   it("refuses a cost quote if the payer balance moved during simulation", async () => {
     const original = mocked.rpc.getMockImplementation()!;
