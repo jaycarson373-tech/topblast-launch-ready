@@ -12,6 +12,15 @@ const bytes = new Uint8Array(66); bytes[0] = 1; bytes[64] = 1;
 const input = { launchId: "00000000-0000-4000-8000-000000000001", signedQuote: "a".repeat(32), signedTransaction: Buffer.from(bytes).toString("base64"), logo: "data:image/png;base64,AA==" };
 const request = () => new Request("http://localhost/api/launch/submit", { method: "POST", body: JSON.stringify(input) });
 describe("launch payment recovery", () => {
+  it("rejects submission of a pre-release test quote after public launch is enabled", async () => {
+    vi.stubEnv("LAUNCHES_ENABLED", "true");
+    vi.stubEnv("PUBLIC_TEST_LAUNCHES_ENABLED", "true");
+    vi.stubEnv("CONTROLLED_LAUNCH_WALLETS", "wallet");
+    mocks.verify.mockReturnValue({ paymentMessageHash: "hash", creatorWallet: "wallet", isTest: true });
+    expect((await POST(request())).status).toBe(403);
+    expect(mocks.bind).not.toHaveBeenCalled();
+    expect(mocks.submit).not.toHaveBeenCalled();
+  });
   it("public test submission still validates the exact signed payment before durable binding", async () => {
     vi.stubEnv("PUBLIC_TEST_LAUNCHES_ENABLED", "true");
     mocks.verify.mockReturnValue({ paymentMessageHash: "hash", creatorWallet: "wallet", isTest: true });

@@ -8,6 +8,14 @@ import { validateTokenImage } from "@/lib/token-image";
 afterEach(() => vi.unstubAllEnvs());
 
 describe("main launch page mode", () => {
+  it("lets the approved creator use the normal launch page before release, never afterward", () => {
+    vi.stubEnv("PUBLIC_TEST_LAUNCHES_ENABLED", "false");
+    vi.stubEnv("CONTROLLED_LAUNCH_WALLETS", "approved-creator");
+    vi.stubEnv("LAUNCHES_ENABLED", "false");
+    expect(launchPageUsesTestMode()).toBe(true);
+    vi.stubEnv("LAUNCHES_ENABLED", "true");
+    expect(launchPageUsesTestMode()).toBe(false);
+  });
   it("routes the normal launch CTA into the open test flow while ordinary launches are closed", () => {
     vi.stubEnv("PUBLIC_TEST_LAUNCHES_ENABLED", "true");
     vi.stubEnv("LAUNCHES_ENABLED", "false");

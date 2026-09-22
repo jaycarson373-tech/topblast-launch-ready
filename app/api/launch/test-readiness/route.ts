@@ -4,6 +4,7 @@ import { assertTestLaunchReady } from "@/lib/test-launch-readiness";
 import { GET as getHealth } from "@/app/api/health/route";
 
 export async function GET(request: Request) {
+  if (process.env.LAUNCHES_ENABLED === "true") return NextResponse.json({ error: "Pre-launch verification is closed" }, { status: 404 });
   // Read-only availability is public; prepare and submit enforce the creator allowlist.
   if (!canAccessTestLaunch(request) && controlledLaunchWallets().length === 0) return NextResponse.json({ error: "Controlled test launches are currently closed" }, { status: 403 });
   try {

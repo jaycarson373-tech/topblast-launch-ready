@@ -24,18 +24,18 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
 }
 export const usePlatformState = () => useContext(Context);
 export function LaunchActions() {
-  const { health } = usePlatformState();
-  return <div className="hero-actions"><Link className="button" href={health?.launchReady ? "/launch" : "/test"}>{health?.launchReady ? "Launch token" : "Test the reward loop"}</Link><Link className="button button-secondary" href="/launch">Review launch setup</Link></div>;
+  // Opening the form does not authorize creation. Server-side launch gates remain authoritative.
+  return <div className="hero-actions"><Link className="button" href="/launch">Launch token</Link><Link className="button button-secondary" href="/explore">Explore launches</Link></div>;
 }
 export function NavStatus() {
   const { health, loading, error } = usePlatformState();
-  return <span className="nav-status" role="status">{loading ? "CHECKING" : error ? "CHECK FAILED" : health?.launchReady ? "AVAILABLE" : health?.controlledTesting ? "CONTROLLED TESTING" : "UNAVAILABLE"}</span>;
+  return <span className="nav-status" role="status">{loading ? "CHECKING" : error ? "CHECK FAILED" : health?.launchReady ? "AVAILABLE" : health?.controlledTesting ? "PRE-LAUNCH" : "UNAVAILABLE"}</span>;
 }
 export function VenueCards() {
   const { health, loading, error, retry } = usePlatformState();
   return <section className="shell venue-section"><div className="eyebrow">VENUES UNDERNEATH</div><h2>THEIR MARKETS.<br />YOUR REWARD LAYER.</h2><div className="venue-cards">{(["stonkfun", "pumpfun"] as const).map((venue) => {
     const state = health?.venues[venue];
-    const status = loading ? "CHECKING" : error ? "CHECK FAILED" : !state?.pairReady ? "UNAVAILABLE" : venue === "pumpfun" ? "BETA" : state.launchReady ? "AVAILABLE" : health?.controlledTesting ? "CONTROLLED TESTING" : "UNAVAILABLE";
+    const status = loading ? "CHECKING" : error ? "CHECK FAILED" : !state?.pairReady ? "UNAVAILABLE" : venue === "pumpfun" ? "BETA" : state.launchReady ? "AVAILABLE" : health?.controlledTesting ? "PRE-LAUNCH" : "UNAVAILABLE";
     return <article className="panel" key={venue}><div className="venue-card-heading"><VenueBadge venue={venue} /><span className="status-pill">{status}</span></div><h3>{venue === "stonkfun" ? "STONK / STONK" : "SOL / WSOL"}</h3><p>Pair / reward asset. Explicit creator deposits. Treasury-wallet-approved payouts.</p>{venue === "pumpfun" ? <p>Official creation instruction only. No initial buy, native cashback, mayhem, or non-SOL pairs. PumpSwap graduation is unsupported; tracking and new epochs pause after graduation.</p> : <p>Launches use StonkFun’s existing LaunchLab infrastructure. Token creation and reward activation are separate checks.</p>}
       {state?.blockers?.length ? <details><summary>Current launch dependencies</summary><ul>{state.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul></details> : null}
       {error && <button onClick={retry} className="button button-secondary button-small">Retry check</button>}

@@ -65,7 +65,7 @@ export async function GET() {
     status: ready ? "ready" : "configuration_required",
     ready,
     launchReady: ready,
-    controlledTesting: controlledLaunchWallets().length > 0,
+    controlledTesting: !readiness.launchesEnabled && controlledLaunchWallets().length > 0,
     fundingReady: databaseReachable && !readiness.dryRun,
     venues: {
       stonkfun: { launchReady: stonkLaunchReady, pairReady: stonkPairReady, creationReady: stonkCreationReady,

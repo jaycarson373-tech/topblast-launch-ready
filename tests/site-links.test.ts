@@ -19,13 +19,19 @@ describe("public footer destinations", () => {
   });
 });
 
-it("offers the clearly labelled rehearsal without implying free mainnet launches", () => {
+it("keeps test navigation and unconfigured placeholders off public pages", () => {
   for (const file of ["components/site-nav.tsx", "app/page.tsx", "app/launch/page.tsx", "app/docs/page.tsx"]) {
     const source = readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
     expect(source).not.toMatch(/test now|try the free test|test without funds|run free simulation/i);
   }
   const docs = readFileSync(new URL("../app/docs/page.tsx", import.meta.url), "utf8");
-  expect(readFileSync(new URL("../components/site-nav.tsx", import.meta.url), "utf8")).toContain('href="/test"');
+  const nav = readFileSync(new URL("../components/site-nav.tsx", import.meta.url), "utf8");
+  expect(nav).not.toContain('href="/test"');
+  expect(nav).not.toContain("CA pending");
+  const footer = readFileSync(new URL("../components/site-footer.tsx", import.meta.url), "utf8");
+  expect(footer).not.toContain("market pending");
+  expect(footer).not.toContain("link pending");
+  expect(docs).not.toContain('href="/test"');
   expect(docs).toContain("They are not proof of live payouts");
   expect(docs).toContain("Dry run locks funding and payout submission");
 });

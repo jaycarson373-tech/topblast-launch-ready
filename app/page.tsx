@@ -1,12 +1,10 @@
 import Link from "next/link";
 import Image from "next/image";
-import { PlatformStatus } from "@/components/platform-status";
 import { BlastExample } from "@/components/blast-example";
 import { LaunchActions, VenueCards } from "@/components/platform-state";
 
 export default function Home() {
   return <main>
-    <PlatformStatus />
     <section className="hero shell">
       <div className="eyebrow">REWARD INFRASTRUCTURE FOR TOKEN LAUNCHES</div>
       <div className="hero-grid"><div>

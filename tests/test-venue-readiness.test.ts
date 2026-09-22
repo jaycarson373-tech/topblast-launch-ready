@@ -5,6 +5,14 @@ vi.mock("@/app/api/health/route", () => ({ GET: mocks.health }));
 import { GET } from "@/app/api/launch/test-readiness/route";
 beforeEach(() => { vi.stubEnv("ADMIN_API_TOKEN", "fixture-token"); vi.stubEnv("PUBLIC_TEST_LAUNCHES_ENABLED", "false"); });
 afterEach(() => vi.unstubAllEnvs());
+it("closes the test endpoint at release even if legacy flags and operator credentials remain", async () => {
+  vi.stubEnv("LAUNCHES_ENABLED", "true");
+  vi.stubEnv("PUBLIC_TEST_LAUNCHES_ENABLED", "true");
+  vi.stubEnv("CONTROLLED_LAUNCH_WALLETS", "approved-creator");
+  mocks.health.mockClear();
+  expect((await GET(new Request("https://example.test", { headers: { Authorization: "Bearer fixture-token" } }))).status).toBe(404);
+  expect(mocks.health).not.toHaveBeenCalled();
+});
 it("never treats pair availability as Stonk creation readiness and keeps Pump independent", async () => {
   mocks.health.mockResolvedValue(Response.json({ missing: [], checks: { databaseReachable: true, workerFresh: true, treasuryRpcReachable: true,
     pumpSchemaReady: true, pumpPairReady: true, stonkPairReady: true, stonkCreationReady: false, stonkCreationError: "Venue configuration unavailable" } }));

@@ -33,6 +33,14 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("controlled test launch boundary, no real transactions", () => {
+  it.each(["stonkfun", "pumpfun"])("rejects new %s test launches after public release, even for the operator", async (venue) => {
+    vi.stubEnv("LAUNCHES_ENABLED", "true");
+    vi.stubEnv("PUBLIC_TEST_LAUNCHES_ENABLED", "true");
+    vi.stubEnv("CONTROLLED_LAUNCH_WALLETS", stonk);
+    expect((await POST(request(true, "fixture-operator-token", venue))).status).toBe(403);
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
   it.each(["stonkfun", "pumpfun"])("opens token-free hidden %s tests only when explicitly enabled", async (venue) => {
     vi.stubEnv("PUBLIC_TEST_LAUNCHES_ENABLED", "true");
     expect((await POST(request(true, undefined, venue))).status).toBe(200);

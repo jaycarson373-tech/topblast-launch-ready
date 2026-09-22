@@ -12,9 +12,9 @@ export function SiteFooter() {
         </div>
         <nav aria-label="Footer">
           <Link href="/docs">Docs</Link>
-          {links.dexscreener ? <a href={links.dexscreener} target="_blank" rel="noopener noreferrer">Dexscreener <span aria-hidden="true">↗</span></a> : <span className="footer-pending">Dexscreener · market pending</span>}
+          {links.dexscreener && <a href={links.dexscreener} target="_blank" rel="noopener noreferrer">Dexscreener <span aria-hidden="true">↗</span></a>}
           <a className="footer-stonk" href={links.stonk} target="_blank" rel="noopener noreferrer">StonkFun <span aria-hidden="true">↗</span></a>
-          {links.x ? <a href={links.x} target="_blank" rel="noopener noreferrer">X <span aria-hidden="true">↗</span></a> : <span className="footer-pending">X · link pending</span>}
+          {links.x && <a href={links.x} target="_blank" rel="noopener noreferrer">X <span aria-hidden="true">↗</span></a>}
         </nav>
       </div>
     </footer>
