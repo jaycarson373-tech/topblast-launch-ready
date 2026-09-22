@@ -19,13 +19,13 @@ describe("public footer destinations", () => {
   });
 });
 
-it("keeps public navigation and product pages free of test-now promotions", () => {
+it("offers the clearly labelled rehearsal without implying free mainnet launches", () => {
   for (const file of ["components/site-nav.tsx", "app/page.tsx", "app/launch/page.tsx", "app/docs/page.tsx"]) {
     const source = readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
     expect(source).not.toMatch(/test now|try the free test|test without funds|run free simulation/i);
-    expect(source).not.toMatch(/href=["']\/test["']/);
   }
   const docs = readFileSync(new URL("../app/docs/page.tsx", import.meta.url), "utf8");
+  expect(readFileSync(new URL("../components/site-nav.tsx", import.meta.url), "utf8")).toContain('href="/test"');
   expect(docs).toContain("They are not proof of live payouts");
   expect(docs).toContain("Dry run locks funding and payout submission");
 });

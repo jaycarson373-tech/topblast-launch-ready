@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ create: vi.fn(), save: vi.fn(), pair: vi.fn(), readiness: vi.fn(), balance: vi.fn(), rpc: vi.fn() }));
 vi.mock("@/lib/db/launch-repository", () => ({ createLaunchDraft: mocks.save }));
 vi.mock("@/lib/test-launch-readiness", () => ({ assertTestLaunchReady: mocks.readiness }));
+vi.mock("@/lib/prepare-budget", () => ({ checkPrepareBudget: async () => null }));
 vi.mock("@/lib/venue/registry", () => ({ launchVenue: () => ({ createLaunch: mocks.create, getPair: mocks.pair }) }));
 vi.mock("@/lib/solana/pumpfun", () => ({ PUMP_SOL_MINT: "So11111111111111111111111111111111111111112" }));
 vi.mock("@/lib/solana/rpc", () => ({ getTreasuryBalance: mocks.balance, solanaRpc: mocks.rpc }));
@@ -48,7 +49,7 @@ describe("controlled test launch boundary, no real transactions", () => {
     expect(mocks.save).not.toHaveBeenCalled();
   });
   it.each([undefined, "wrong-token"])("rejects unauthenticated test creation (%s)", async (token) => {
-    expect((await POST(request(true, token))).status).toBe(401);
+    expect((await POST(request(true, token))).status).toBe(403);
     expect(mocks.create).not.toHaveBeenCalled(); expect(mocks.save).not.toHaveBeenCalled();
   });
   it("cannot use admin access to open ordinary public creation", async () => {

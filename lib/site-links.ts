@@ -11,7 +11,7 @@ export function publicLink(value: string | undefined, hosts: readonly string[], 
 
 export function getSiteLinks() {
   return {
-    dexscreener: publicLink(process.env.NEXT_PUBLIC_DEXSCREENER_URL, ["dexscreener.com", "www.dexscreener.com"], "https://dexscreener.com/solana")!,
+    dexscreener: publicLink(process.env.NEXT_PUBLIC_DEXSCREENER_URL, ["dexscreener.com", "www.dexscreener.com"]),
     stonk: publicLink(process.env.NEXT_PUBLIC_STONK_URL, ["stonkfun.xyz", "www.stonkfun.xyz"], "https://www.stonkfun.xyz")!,
     x: publicLink(process.env.NEXT_PUBLIC_X_URL, ["x.com", "www.x.com", "twitter.com", "www.twitter.com"]),
   };

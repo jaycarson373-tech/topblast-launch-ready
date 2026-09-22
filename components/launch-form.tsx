@@ -27,6 +27,8 @@ const RECEIPT_KEY = "topblast-launch-receipt-v1";
 interface Receipt { launchId: string; paymentSignature: string }
 interface LaunchStatus { status: string; mint?: string; pool?: string; signature?: string; paymentSignature?: string; trackerStatus?: string; retrySafe?: boolean; failureMessage?: string }
 interface Prepared {
+  rewardTreasury?: string;
+  protocolTreasury?: string;
   raw?: { mintSignerRequired?: boolean; creationMethod?: string; venueFees?: { denominator: string; protocolRate: string; platformRate: string; creatorRate: string } };
   logo: string;
   launchId: string;
@@ -46,7 +48,7 @@ const toDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
 const decodeBase64 = (value: string) => Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
 const encodeBase64 = (value: Uint8Array) => btoa(String.fromCharCode(...value));
 
-export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
+export function LaunchForm({ testMode = false, publicTestListing = false }: { testMode?: boolean; publicTestListing?: boolean }) {
   const receiptKey = testMode ? `${RECEIPT_KEY}-test` : RECEIPT_KEY;
   const [venue, setVenue] = useState<"stonkfun" | "pumpfun">("stonkfun");
   const mintSigner = useRef<Keypair | null>(null);
@@ -83,7 +85,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
       if (saved) { const parsed = JSON.parse(saved); if (typeof parsed.launchId === "string" && typeof parsed.paymentSignature === "string") setReceipt(parsed); }
     } catch { /* Storage may be unavailable; in-memory state still prevents resubmission. */ }
     clientJson(testMode ? "/api/launch/test-readiness" : "/api/health", { cache: "no-store" }, 25_000, "Launch availability check timed out")
-      .then(({ response, body }) => { if (!response.ok) throw new Error(body.error ?? "Launch availability check failed"); return body; })
+      .then(({ response, body }) => { if (!response.ok && !(response.status === 503 && typeof body.launchReady === "boolean")) throw new Error(body.error ?? "Launch availability check failed"); return body; })
       .then((body) => setRuntime(testMode ? body : { ready: body.venues?.stonkfun ? body.venues.stonkfun.launchReady === true : body.ready === true, stonkBlockers: body.venues?.stonkfun?.blockers ?? [], missing: body.missing ?? [], pumpReady: body.venues?.pumpfun?.launchReady === true, pumpBlockers: body.venues?.pumpfun?.blockers ?? ["Pump.fun readiness has not been verified"] }))
       .catch((caught) => { if (testMode) setError(caught instanceof Error ? caught.message : "Test availability check failed"); setRuntime({ ready: false, missing: ["runtime health check"], stonkBlockers: ["Test or infrastructure checks unavailable"], pumpReady: false, pumpBlockers: ["Runtime health check unavailable"] }); });
   }, [receiptKey, testMode]);
@@ -271,7 +273,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
         <details><summary>View saved receipt</summary><p className="mono">Launch: {receipt.launchId}<br />Transaction: <a href={`https://solscan.io/tx/${encodeURIComponent(receipt.paymentSignature)}`} target="_blank" rel="noreferrer">{receipt.paymentSignature}</a></p></details>
       </section>}
       {error && <div className="error" role="alert">{error}</div>}
-      {testMode && <section className="form-section"><div className="section-label">Test with your own wallet</div><p className="notice">1. Connect wallet. 2. Choose your venue and token details. 3. Review the cost and approve in your wallet.</p><p className="notice">Real mainnet costs. Hidden on TopBlast, not private onchain or at the venue. No token is created until you approve the reviewed transaction. Reward payouts remain separately gated.</p>{walletPicker}{wallet && <p className="notice">Connected: <span className="mono">{wallet.address}</span></p>}<p className="notice" role="status">{!runtime ? "Checking test availability..." : venueReady ? "Test launch available. No access token required." : "Testing unavailable. Check the message below or retry."}</p><button type="button" className="button button-secondary" disabled={busy || Boolean(prepared)} onClick={() => void checkTestAccess()}>Refresh test availability</button></section>}
+      {testMode && <section className="form-section"><div className="section-label">Test with your own wallet</div><p className="notice">1. Connect wallet. 2. Choose your venue and token details. 3. Review the cost and approve in your wallet.</p><p className="notice">Real mainnet costs. {publicTestListing ? "Listed publicly as a controlled test." : "Hidden on TopBlast."} Onchain and venue activity is public. No token is created until you approve the reviewed transaction. Reward payouts remain separately gated.</p>{walletPicker}{wallet && <p className="notice">Connected: <span className="mono">{wallet.address}</span></p>}<p className="notice" role="status">{!runtime ? "Checking test availability..." : venueReady ? "Infrastructure ready. An approved creator wallet is still required." : "Testing unavailable. Check the message below or retry."}</p><button type="button" className="button button-secondary" disabled={busy || Boolean(prepared)} onClick={() => void checkTestAccess()}>Refresh test availability</button></section>}
       {runtime && !venueReady && <div className="error"><strong>{venue === "pumpfun" ? "Pump.fun unavailable." : "StonkFun unavailable."}</strong> The transaction button stays locked until infrastructure checks pass. No payment can be submitted here.<ul>{(venue === "pumpfun" ? runtime.pumpBlockers : runtime.stonkBlockers ?? []).map((blocker) => <li key={blocker}>{blocker}</li>)}</ul></div>}
       <fieldset disabled={busy || Boolean(prepared) || Boolean(receipt)}>
       <div className="launch-venue-hint"><VenueBadge venue={venue} /><span>{venue === "pumpfun" ? "SOL pair · WSOL rewards" : "STONK pair · STONK rewards"}</span></div>
@@ -312,11 +314,13 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
         <div className="panel" style={{ background: "#fff5d7" }}>
           <div className="section-label">Transaction review</div>
           <div className="token-venue"><VenueBadge venue={prepared.review.venue} /></div>
-          {testMode && <p className="notice"><strong>TEST LAUNCH · HIDDEN FROM PUBLIC TOPBLAST PAGES</strong><br />This is a real Solana mainnet transaction, not a simulation-only launch.</p>}
+          {testMode && <p className="notice"><strong>TEST LAUNCH · {publicTestListing ? "PUBLICLY LISTED AS A CONTROLLED TEST" : "HIDDEN FROM PUBLIC TOPBLAST PAGES"}</strong><br />This is a real Solana mainnet transaction, not a simulation-only launch.</p>}
           <h3>{prepared.review.name} · ${prepared.review.symbol}</h3>
           <Image src={prepared.logo} alt="Token image included in this launch" width={96} height={96} className="review-token-image" unoptimized />
           <p className="notice">Venue: {prepared.review.venue === "pumpfun" ? "Pump.fun" : "StonkFun"}. Pair: {prepared.review.symbol} / {prepared.review.quoteSymbol}. Your share: {prepared.review.creatorShare.topblastPercent}% rewards / {prepared.review.creatorShare.creatorPercent}% creator.</p>
           <p className="notice">Overall funding allocation: {prepared.review.allocation.topblastPercent}% rewards, {prepared.review.allocation.creatorPercent}% creator retained, {prepared.review.allocation.protocolPercent}% protocol. Your two controls divide the remaining {CREATOR_REWARD_PERCENT}%, not 100% of gross funding.</p>
+          <p className="notice">Reward asset: {prepared.review.venue === "pumpfun" ? "WSOL" : "STONK"}. Reward treasury: <span className="mono">{prepared.rewardTreasury ?? "Unavailable. Do not approve until verified."}</span>. Protocol treasury: <span className="mono">{prepared.protocolTreasury ?? "Unavailable. Do not approve until verified."}</span>.</p>
+          <p className="notice"><strong>Permanent configuration:</strong> allocation and token metadata are fixed at launch. Venue fees do not automatically become rewards. Explicit funding and treasury-wallet payout approval are separate steps. {prepared.review.venue === "pumpfun" && "Pump is beta. No initial buy, native cashback, mayhem, non-SOL pair, or PumpSwap graduation support. Tracking and new epochs pause at unsupported graduation."}</p>
           {prepared.review.venue === "pumpfun" && <p className="notice">Shown SOL cost is the simulated debit for network fees and account creation. No initial buy. Creator fees follow Pump.fun’s schedule. TopBlast rewards require a separate creator deposit.</p>}
           {prepared.raw?.creationMethod === "stonk_launchlab" && <p className="notice">StonkFun standard launch through its published LaunchLab configuration. Shown SOL cost covers simulated network fees and account rent, not an initial buy or reward funding. Stonk’s token listing may take time to appear.</p>}
           {prepared.raw?.venueFees && <p className="notice">Venue trading fees: {((Number(prepared.raw.venueFees.protocolRate) + Number(prepared.raw.venueFees.platformRate) + Number(prepared.raw.venueFees.creatorRate)) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% total, including {(Number(prepared.raw.venueFees.creatorRate) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% creator fee. These are separate from the TopBlast deposit allocation.</p>}
@@ -325,7 +329,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
           <button type="button" className="button" disabled={busy || Boolean(prepared.expiresAt && new Date(prepared.expiresAt).getTime() <= now)} onClick={signAndSubmit}>Confirm in wallet</button> <button type="button" className="button button-secondary" disabled={busy} onClick={() => setPrepared(null)}>Edit / refresh review</button>
         </div>
       )}
-      {result && <div className={result.trackerStatus === "active" ? "success" : "error"}><strong>{result.trackerStatus === "active" ? "Launch complete. TopBlast tracking active." : "Token launched. Tracker registration needs recovery."}</strong><br />Mint: {result.mint}<br />Pool: {result.pool}<br />Signature: {result.signature}{result.trackerStatus !== "active" && <><br />Use the saved payment status recovery to retry tracking. No second payment is required.</>}</div>}
+      {result && <div className={result.trackerStatus === "active" ? "success" : "error"}><strong>{result.trackerStatus === "active" ? "Launch complete. TopBlast tracking active." : "Token launched. Tracker registration needs recovery."}</strong><br />Mint: {result.mint}<br />Pool: {result.pool}<br />Signature: {result.signature}<br /><a href="/creator">Open creator dashboard to fund and verify</a>{result.mint && (!testMode || publicTestListing) && <> · <a href={`/token/${result.mint}`}>Open token page</a></>}{result.trackerStatus !== "active" && <><br />Use the saved payment status recovery to retry tracking. No second payment is required.</>}</div>}
       <div className="form-footer">
         <p className="notice">Your wallet signs the reviewed launch transaction. TopBlast never receives your private key.</p>
         {!prepared && !receipt && !result && <button className="button venue-button" disabled={busy || imageLoading || total !== 100 || !venueReady}>{busy ? "Preparing..." : !runtime ? "Checking availability..." : !venueReady ? "Temporarily unavailable" : wallet ? venue === "pumpfun" ? "Launch on Pump.fun" : "Launch on STONK" : "Connect and launch"}</button>}

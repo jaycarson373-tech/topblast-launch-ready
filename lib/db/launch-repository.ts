@@ -15,6 +15,7 @@ export async function createLaunchDraft(draft: LaunchDraft, signedQuote: string,
   const { data, error } = await db.from("launches").insert({
     creator_wallet: draft.creatorWallet,
     is_test: draft.isTest === true,
+    public_test_listing: draft.isTest === true && process.env.CONTROLLED_TEST_LISTINGS_PUBLIC === "true",
     name: draft.name,
     symbol: draft.symbol,
     description: draft.description,
@@ -162,6 +163,8 @@ export async function listLaunches(): Promise<LaunchSummary[]> {
     totalRewardedAtoms: String(row.total_rewarded_atoms ?? "0"),
     eligibleWallets: Number(row.eligible_wallets ?? 0), createdAt: row.created_at, status: row.status,
     imageUrl: row.image_url, trackerStatus: row.tracker_status, totalFundedAtoms: String(row.total_funded_atoms ?? "0"),
+    venue: row.venue, isTest: row.is_test, currentEpoch: row.current_epoch, quoteDecimals: row.quote_decimals,
+    availableRewardAtoms: row.available_reward_atoms == null ? null : String(row.available_reward_atoms),
   }));
 }
 

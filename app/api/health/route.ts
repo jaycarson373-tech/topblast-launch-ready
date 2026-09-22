@@ -4,6 +4,7 @@ import { runtimeReadiness } from "@/lib/readiness";
 import { StonkFunAdapter } from "@/lib/venue/stonkfun-adapter";
 import { getTreasuryBalance } from "@/lib/solana/rpc";
 import { pumpCreationAvailable } from "@/lib/solana/pumpfun";
+import { controlledLaunchWallets } from "@/lib/test-launch-access";
 
 export const runtime = "nodejs";
 
@@ -21,13 +22,15 @@ export async function GET() {
   let pumpSchemaReady = false;
   let pumpPairReady = false;
   if (readiness.database) {
-    const { data, error } = await getAdminDb().from("system_config").select("key,value").in("key", ["worker_heartbeat", "reward_engine_paused"]);
+    const { data, error } = await getAdminDb().from("system_config").select("key,value").in("key", ["worker_heartbeat", "reward_engine_paused", "production_acceptance"]);
     databaseReachable = !error;
     const heartbeat = data?.find((row) => row.key === "worker_heartbeat")?.value as { at?: string; pipeline?: string } | undefined;
     workerFresh = Boolean(heartbeat?.at && heartbeat.pipeline === "operational" && Date.now() - new Date(heartbeat.at).getTime() < 180_000);
     enginePaused = data?.find((row) => row.key === "reward_engine_paused")?.value !== false;
     const { count } = await getAdminDb().from("transaction_proofs").select("id", { count: "exact", head: true }).eq("kind", "distribution").not("signature", "is", null);
-    acceptedCycle = (count ?? 0) > 0;
+    // A lone distribution is not evidence of a complete launch-to-restart cycle.
+    const acceptance = data?.find((row) => row.key === "production_acceptance")?.value as { verified?: boolean; evidenceUrl?: string; restartVerified?: boolean } | undefined;
+    acceptedCycle = (count ?? 0) > 0 && acceptance?.verified === true && acceptance.restartVerified === true && typeof acceptance.evidenceUrl === "string" && acceptance.evidenceUrl.startsWith("https://");
     const pumpSchema = await getAdminDb().from("launch_metadata").select("id").limit(1);
     pumpSchemaReady = !pumpSchema.error;
   }
@@ -62,6 +65,8 @@ export async function GET() {
     status: ready ? "ready" : "configuration_required",
     ready,
     launchReady: ready,
+    controlledTesting: controlledLaunchWallets().length > 0,
+    fundingReady: databaseReachable && !readiness.dryRun,
     venues: {
       stonkfun: { launchReady: stonkLaunchReady, pairReady: stonkPairReady, creationReady: stonkCreationReady,
         creationMethod: "stonk_launchlab", rewardAsset: "STONK", fundingMode: "creator_deposit",

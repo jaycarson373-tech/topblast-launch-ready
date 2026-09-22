@@ -5,6 +5,7 @@ import { applyPositionEvent, emptyPosition, type PositionEvent } from "@/lib/rew
 import { buildEpochPlan } from "@/lib/rewards/epoch";
 import { splitFundedFees } from "@/lib/rewards/calculator";
 import type { WalletPosition } from "@/lib/types";
+import { initialCreatorShare, creatorShareToAllocation } from "@/lib/launch-allocation";
 
 export const rehearsalSchema = z.object({
   version: z.literal(1),
@@ -36,7 +37,7 @@ function positions(launchId: string, state: RehearsalState): WalletPosition[] {
 }
 
 export function rehearsalPlan(state: RehearsalState, launchId = "SIM-A") {
-  const split = splitFundedFees(launchId, launchId, BigInt(state.gross) * QUOTE_SCALE, { topblastPercent: 70, creatorPercent: 20, protocolPercent: 10 });
+  const split = splitFundedFees(launchId, launchId, BigInt(state.gross) * QUOTE_SCALE, creatorShareToAllocation(initialCreatorShare));
   const budget = state.step >= 2 && launchId === "SIM-A" ? split.topblast : 0n;
   const plan = buildEpochPlan({
     launchId, epochId: `${launchId}:epoch-1`, startSlot: 20n, snapshotSlot: 40n,

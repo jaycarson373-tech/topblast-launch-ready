@@ -19,6 +19,7 @@ export function decimalToAtoms(value: string, decimals: number) {
 }
 
 export async function prepareLaunchFunding(launchId: string, funderWallet: string, amount: string) {
+  if (process.env.DRY_RUN !== "false") throw new Error("Funding is locked while DRY_RUN is enabled. No wallet signature or deposit is required yet.");
   const db = getAdminDb();
   const { data: launch, error } = await db.from("launches")
     .select("id,status,venue,creator_wallet,quote_mint,launch_configs(*)")
@@ -114,7 +115,8 @@ export async function reconcileLaunchFunding(intentId: string) {
     creatorRetainedAtoms: String(intent.creator_amount_atoms), protocolAmountAtoms: String(intent.protocol_amount_atoms),
     rewardTreasury: intent.reward_treasury, protocolTreasury: intent.protocol_treasury,
   };
-  const blockTime = new Date((finality.blockTime ?? Math.floor(Date.now() / 1000)) * 1000).toISOString();
+  if (finality.blockTime == null) return { status: "submitted", signature: intent.signature, launchId: intent.launch_id, message: "Finalized block time is unavailable. Keep this receipt and retry verification." };
+  const blockTime = new Date(finality.blockTime * 1000).toISOString();
   const { error: rpcError } = await db.rpc("confirm_funding_deposit", {
     p_intent_id: intentId, p_signature: intent.signature, p_slot: finality.slot, p_block_time: blockTime, p_proof: proof,
   });

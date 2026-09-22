@@ -14,6 +14,8 @@ describe("Supabase migrations", () => {
     }
     await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609150001_pumpfun.sql"), "utf8"));
     await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609210001_test_launches.sql"), "utf8"));
+    await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609220001_public_listing_controls.sql"), "utf8"));
+    await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609220001_public_listing_controls.sql"), "utf8"));
     await db.exec("set role service_role");
     await db.query("insert into public.launch_metadata(id,metadata,image_data) values('00000000-0000-4000-8000-000000000099','{}','test-image')");
     await expect(db.query("update public.launch_metadata set image_data='overwritten'")).rejects.toThrow();
@@ -88,6 +90,24 @@ describe("Supabase migrations", () => {
     await db.exec("set role anon");
     await expect(db.query("insert into public.funding_deposits(launch_id,intent_id,signature,sender_wallet,recipient_wallet,asset_mint,amount_atoms,gross_amount_atoms,protocol_amount_atoms,slot,block_time,proof) select launch_id,id,'evil','x','y','stonk',1,1,0,1,now(),'{}' from public.funding_intents limit 1")).rejects.toThrow();
     await db.exec("reset role");
+    const c = "00000000-0000-4000-8000-00000000000c";
+    await db.query("insert into public.launches(id,venue,creator_wallet,name,symbol,image_url,quote_mint,quote_symbol,mint,market_address,signed_quote_hash,status,is_test,public_test_listing) values($1,'stonkfun','creator','Public Test','TEST','logo','stonk','STONK','mint-c','market-c','hash','active',true,true)", [c]);
+    await expect(db.query("update public.launches set public_test_listing=true where id=$1", [b])).rejects.toThrow("classification is immutable");
+    await db.query("update public.launches set listing_hidden=true,listing_hidden_reason='Archived test, receipts preserved' where id=$1", [a]);
+    await db.exec("set role anon");
+    expect((await db.query<{ id: string }>("select id from public.launch_explore order by id")).rows).toEqual([{ id: c }]);
+    expect((await db.query("select * from public.transaction_proofs where launch_id=$1", [a])).rows).toEqual([]);
+    await db.exec("reset role");
+    expect((await db.query("select id from public.launches where id=$1", [a])).rows).toHaveLength(1);
+    await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609220002_prepare_rate_limits.sql"), "utf8"));
+    for (let count = 1; count <= 31; count++) {
+      expect((await db.query<{ consume_prepare_budget: boolean }>("select public.consume_prepare_budget('launch_prepare')")).rows[0].consume_prepare_budget).toBe(count <= 30);
+    }
+    expect((await db.query<{ consume_prepare_budget: boolean }>("select public.consume_prepare_budget('funding_prepare')")).rows[0].consume_prepare_budget).toBe(true);
+    await db.exec("set role anon");
+    await expect(db.query("select public.consume_prepare_budget('launch_prepare')")).rejects.toThrow();
+    await db.exec("reset role");
+    await db.query("update public.launches set listing_hidden=false where id=$1", [a]);
     await db.close();
   }, 30_000);
 });

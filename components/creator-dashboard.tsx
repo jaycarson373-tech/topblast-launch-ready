@@ -1,29 +1,94 @@
 "use client";
-import { useState } from "react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 import { getWallets } from "@wallet-standard/app";
 import { FundingPanel } from "@/components/funding-panel";
 import { VenueBadge } from "@/components/venue-badge";
+import { clientJson } from "@/lib/client-json";
+import { formatTokenAtoms } from "@/lib/token-display";
 
-interface Account { address:string }
-interface Wallet { name:string; features:Record<string,unknown> }
-interface Connect { connect():Promise<{accounts:readonly Account[]}> }
-export function CreatorDashboard(){
-  const [launches,setLaunches]=useState<Record<string,unknown>[]>([]); const [wallet,setWallet]=useState(""); const [error,setError]=useState("");
-  async function connect(){try{const wallets=getWallets().get() as unknown as readonly Wallet[];const item=wallets.find((candidate)=>candidate.features["standard:connect"]);if(!item)throw new Error("No Solana wallet found");const result=await (item.features["standard:connect"] as Connect).connect();const address=result.accounts[0]?.address;if(!address)throw new Error("No wallet account returned");setWallet(address);const response=await fetch(`/api/creator?wallet=${encodeURIComponent(address)}`);const body=await response.json();if(!response.ok)throw new Error(body.error);setLaunches(body.launches??[])}catch(caught){setError(caught instanceof Error?caught.message:"Could not connect")}}
+interface Account { address: string; chains: readonly string[] }
+interface Wallet { name: string; features: Record<string, unknown> }
+interface Connect { connect(): Promise<{ accounts: readonly Account[] }> }
+interface Events { on(event: "change", listener: (change: { accounts?: readonly Account[] }) => void): () => void }
+type Row = Record<string, unknown>;
+const rows = (value: unknown): Row[] => Array.isArray(value) ? value : value && typeof value === "object" ? [value as Row] : [];
+export function CreatorDashboard() {
+  const [launches, setLaunches] = useState<Row[]>([]);
+  const [wallet, setWallet] = useState("");
+  const [wallets, setWallets] = useState<readonly Wallet[]>([]);
+  const [selected, setSelected] = useState("");
+  const [connected, setConnected] = useState<Wallet | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    const registry = getWallets();
+    const refresh = () => { const found = registry.get().filter((item) => item.features["standard:connect"] && item.features["solana:signTransaction"]) as readonly Wallet[]; setWallets(found); setSelected((old) => old || found[0]?.name || ""); };
+    refresh(); return registry.on("register", refresh);
+  }, []);
+  useEffect(() => {
+    const events = connected?.features["standard:events"] as Events | undefined;
+    return events?.on("change", ({ accounts }) => {
+      if (!accounts) return;
+      setWallet(accounts.find((account) => account.chains.includes("solana:mainnet"))?.address ?? "");
+      setLaunches([]); setError("");
+    });
+  }, [connected]);
+  useEffect(() => {
+    if (!wallet) return;
+    let current = true; setLoading(true); setError(""); setLaunches([]);
+    clientJson(`/api/creator?wallet=${encodeURIComponent(wallet)}`, { cache: "no-store" }, 20_000, "Dashboard check timed out. Your receipts remain stored.")
+      .then(({ response, body }) => { if (!response.ok || body.configured === false) throw new Error(body.error ?? "Creator data is unavailable"); if (current) setLaunches(body.launches ?? []); })
+      .catch((caught) => { if (current) setError(caught.message); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, [wallet, attempt]);
+  async function connect() {
+    setConnecting(true); setError("");
+    try {
+      const item = wallets.find((candidate) => candidate.name === selected);
+      if (!item) throw new Error("Install or select a Solana wallet. No private key is needed.");
+      const result = await (item.features["standard:connect"] as Connect).connect();
+      const account = result.accounts.find((candidate) => candidate.chains.includes("solana:mainnet"));
+      if (!account) throw new Error("Switch your wallet to Solana mainnet");
+      setConnected(item); setWallet(account.address);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not connect"); }
+    finally { setConnecting(false); }
+  }
   return <>
-    {!wallet ? <button className="button" onClick={connect}>Connect creator wallet</button> : <p className="mono">{wallet}</p>}
-    {error && <div className="error">{error}</div>}
-    {wallet && (launches.length ? <div className="cards">{launches.map((launch) => <div className="token-card" key={String(launch.id)}>
-      <div className="token-card-head"><h3>{String(launch.name)}</h3><span className="status-pill">{String(launch.status)} · {String(launch.tracker_status ?? "tracker pending")}</span></div>
-      <div className="creator-venue"><VenueBadge venue={String(launch.venue)} /></div>
-      {launch.is_test === true && <p className="notice"><strong>TEST LAUNCH · NOT PUBLICLY LISTED</strong><br />Hidden from TopBlast Explore and token/proof pages. Onchain activity and venue listings remain public.</p>}
-      <div className="metrics">
-        <div className="metric"><span>Ticker</span><strong>${String(launch.symbol)}</strong></div>
-        <div className="metric"><span>Volume</span><strong>{String(launch.volume_24h_usd ?? "Pending")}</strong></div>
-        <div className="metric"><span>Epochs</span><strong>{Array.isArray(launch.reward_epochs) ? launch.reward_epochs.length : 0}</strong></div>
-        <div className="metric"><span>Rules</span><strong>Fixed at launch</strong></div>
-      </div>
-      {launch.status === "active" && <FundingPanel launchId={String(launch.id)} creatorWallet={wallet} venue={String(launch.venue)} />}
-    </div>)}</div> : <div className="empty">No launches are associated with this creator wallet.</div>)}
+    <div className="lookup"><select aria-label="Creator wallet provider" value={selected} onChange={(event) => setSelected(event.target.value)}><option value="" disabled>Select wallet</option>{wallets.map((item) => <option key={item.name}>{item.name}</option>)}</select><button className="button" disabled={connecting} onClick={connect}>{connecting ? "Connecting…" : wallet ? "Switch creator wallet" : "Connect creator wallet"}</button>{wallet && <button className="button button-secondary" disabled={loading} onClick={() => setAttempt(attempt + 1)}>Refresh</button>}</div>
+    {wallet && <p className="mono">{wallet}</p>}
+    <p className="notice">Viewing public launch records does not grant spending permission. Each funding or payout transaction requires its own exact wallet approval.</p>
+    {error && <div className="error" role="alert">{error}<button className="button button-secondary button-small" onClick={() => setAttempt(attempt + 1)}>Retry</button></div>}
+    {loading && <div className="empty" role="status">Loading your launch ledgers…</div>}
+    {wallet && !loading && !error && (launches.length ? <div className="creator-launches">{launches.map((launch) => {
+      const config = rows(launch.launch_configs)[0];
+      const funding = rows(launch.launch_funding_balances)[0];
+      const market = rows(launch.tracked_markets)[0];
+      const epochs = rows(launch.reward_epochs).sort((a, b) => Number(b.sequence) - Number(a.sequence));
+      const deposits = rows(launch.funding_deposits), batches = rows(launch.payout_batches);
+      const decimals = market?.quote_decimals == null ? null : Number(market.quote_decimals);
+      const asset = launch.venue === "pumpfun" ? "WSOL" : "STONK";
+      const amount = (value: unknown) => decimals === null ? `${String(value ?? 0)} atoms` : `${formatTokenAtoms(value ?? "0", decimals)} ${asset}`;
+      const publicPage = Boolean(launch.mint && !launch.listing_hidden && (!launch.is_test || launch.public_test_listing));
+      const gross = deposits.reduce((sum, row) => sum + BigInt(String(row.gross_amount_atoms)), 0n);
+      return <article className="panel" key={String(launch.id)}>
+        <div className="token-card-head"><div><h3>{String(launch.name)} · ${String(launch.symbol)}</h3><VenueBadge venue={String(launch.venue)} /></div><span className="status-pill">{String(launch.status).toUpperCase()}</span></div>
+        <p className="notice">{launch.listing_hidden ? "ARCHIVED LISTING · Records and receipts preserved." : launch.is_test ? launch.public_test_listing ? "CONTROLLED TEST · PUBLICLY LISTED" : "HIDDEN TEST · NOT PUBLICLY LISTED" : "PUBLIC LAUNCH"}</p>
+        <p className="notice">Tracker: {String(launch.tracker_status ?? "pending")} · {market?.history_complete ? "Finalized history caught up" : "History incomplete: no payable eligibility yet"}</p>
+        {launch.tracker_error ? <div className="error">Tracker recovery needed: {String(launch.tracker_error)}. Use your saved launch receipt to retry registration. Do not launch again.</div> : null}
+        <details><summary>Token, market and immutable allocation</summary><p className="mono">Token: {String(launch.mint ?? "Pending")}<br />Market: {String(launch.market_address ?? "Pending")}<br />Reward treasury: {String(config?.treasury_address ?? "Unavailable")}</p><p>{String(config?.topblast_percent ?? "Unavailable")}% rewards / {String(config?.creator_percent ?? "Unavailable")}% creator retained / {String(config?.protocol_percent ?? "Unavailable")}% protocol, of explicit gross funding. Fixed at launch.</p></details>
+        <div className="stats-grid"><div className="metric"><span>Gross funding declared</span><strong>{amount(gross.toString())}</strong></div><div className="metric"><span>Available rewards</span><strong>{amount(funding?.available_atoms)}</strong></div><div className="metric"><span>Reserved</span><strong>{amount(funding?.reserved_atoms)}</strong></div><div className="metric"><span>Submitted, not paid</span><strong>{amount(funding?.submitted_atoms)}</strong></div><div className="metric"><span>Confirmed payouts</span><strong>{amount(funding?.paid_atoms)}</strong></div><div className="metric"><span>Current epoch</span><strong>{epochs[0] ? `${epochs[0].sequence} · ${epochs[0].status}` : "Not started"}</strong></div></div>
+        <p className="notice">Funding mode: explicit creator deposits. Creator-retained funding stays in your wallet; it is not deposited into the reward pool. Current payouts require treasury-wallet approval.</p>
+        {launch.venue === "pumpfun" && <p className="notice">PUMP BETA · No initial buy, native cashback, mayhem or non-SOL pairs. PumpSwap graduation is unsupported; tracking and new epochs pause at graduation.</p>}
+        {publicPage && <div className="hero-actions"><Link className="button button-secondary" href={`/token/${launch.mint}`}>Open token</Link><Link className="button button-secondary" href={`/token/${launch.mint}/proof`}>Review epoch & proof</Link></div>}
+        {launch.launch_signature ? <p className="notice"><a href={`https://solscan.io/tx/${launch.launch_signature}`} target="_blank" rel="noreferrer">Launch transaction ↗</a></p> : null}
+        {["active", "paused"].includes(String(launch.status)) && <FundingPanel key={`${launch.id}:${wallet}`} launchId={String(launch.id)} creatorWallet={wallet} venue={String(launch.venue)} />}
+        {deposits.length > 0 && <details><summary>Funding receipts</summary>{deposits.map((deposit) => <a className="proof-link" key={String(deposit.signature)} href={`https://solscan.io/tx/${deposit.signature}`} target="_blank" rel="noreferrer">{amount(deposit.amount_atoms)} to rewards · {String(deposit.block_time)}</a>)}</details>}
+        {batches.length > 0 && <details><summary>Payout batches and recovery</summary>{batches.map((batch) => <p className="notice" key={String(batch.id)}>{String(batch.status).toUpperCase()} · {amount(batch.amount_atoms)} {batch.signature ? <a href={`https://solscan.io/tx/${batch.signature}`} target="_blank" rel="noreferrer">Transaction ↗</a> : "· Treasury approval pending"}{batch.error_message ? ` · ${batch.error_message}` : ""}</p>)}<p className="notice">An authorized operator prepares and confirms payouts in Admin using the treasury wallet. Creator access alone cannot spend the treasury.</p></details>}
+      </article>;
+    })}</div> : <div className="empty">No launches are associated with this creator wallet.</div>)}
   </>;
 }

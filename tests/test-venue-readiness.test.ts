@@ -13,7 +13,7 @@ it("never treats pair availability as Stonk creation readiness and keeps Pump in
 });
 it("requires operator authorization without contacting either venue", async () => {
   mocks.health.mockClear();
-  expect((await GET(new Request("https://example.test"))).status).toBe(401);
+  expect((await GET(new Request("https://example.test"))).status).toBe(403);
   expect(mocks.health).not.toHaveBeenCalled();
 });
 it("serves readiness without credentials only while public tests are explicitly enabled", async () => {

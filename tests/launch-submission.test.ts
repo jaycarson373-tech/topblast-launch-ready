@@ -31,7 +31,7 @@ describe("launch payment recovery", () => {
   });
   it("requires operator authorization for a saved hidden test before binding or submitting", async () => {
     mocks.verify.mockReturnValue({ paymentMessageHash: "hash", creatorWallet: "wallet", isTest: true });
-    expect((await POST(request())).status).toBe(401);
+    expect((await POST(request())).status).toBe(403);
     expect(mocks.bind).not.toHaveBeenCalled();
     expect(mocks.submit).not.toHaveBeenCalled();
   });

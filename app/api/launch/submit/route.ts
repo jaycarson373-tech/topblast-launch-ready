@@ -14,7 +14,7 @@ export async function POST(request: Request) {
   try {
     const input = submitLaunchSchema.parse(await request.json());
     const prepared = await verifyLaunchQuote(input.launchId, input.signedQuote);
-    if (prepared.isTest && !canAccessTestLaunch(request)) return NextResponse.json({ error: "Public test launches are currently closed. Keep your receipt and do not pay again." }, { status: 401 });
+    if (prepared.isTest && !canAccessTestLaunch(request, prepared.creatorWallet)) return NextResponse.json({ error: "Controlled testing is currently closed for this creator. Keep your receipt and do not pay again." }, { status: 403 });
     inspectSignedMessage({ signedTransaction: input.signedTransaction, expectedMessageHash: prepared.paymentMessageHash, expectedPayer: prepared.creatorWallet });
     const paymentSignature = paymentSignatureFromTransaction(Buffer.from(input.signedTransaction, "base64"));
     await bindLaunchPayment(input.launchId, paymentSignature, input.signedTransaction);

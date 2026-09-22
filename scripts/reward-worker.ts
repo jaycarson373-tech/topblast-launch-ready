@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { exactDatabaseFetch } from "../lib/db/exact-json";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { reconcileLaunchFunding } from "../lib/funding/service";
@@ -10,7 +11,7 @@ import { submitBoundLaunch } from "../lib/venue/launch-submission-service";
 const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const configured = Boolean(url && key);
-const db = url && key ? createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
+const db = url && key ? createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: exactDatabaseFetch } }) : null;
 const dryRun = process.env.DRY_RUN !== "false";
 const owner = `${process.env.RAILWAY_REPLICA_ID ?? "local"}:${process.pid}:${randomUUID()}`;
 const port = Number(process.env.PORT ?? 0);

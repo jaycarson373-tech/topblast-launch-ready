@@ -86,6 +86,11 @@ export interface RewardAllocation {
 }
 
 export interface LaunchSummary {
+  venue?: string;
+  isTest?: boolean;
+  currentEpoch?: number | null;
+  quoteDecimals?: number | null;
+  availableRewardAtoms?: string | null;
   id: string;
   mint: string;
   name: string;

@@ -13,14 +13,14 @@ describe("public rehearsal (simulation, not onchain acceptance)", () => {
   });
   it("splits sample fees and reserves only the reward portion", () => {
     const plan = rehearsalPlan({ ...newRehearsal(), step: 3 });
-    expect(plan.split).toEqual({ topblast: 7000n, creator: 2000n, protocol: 1000n });
-    expect(plan.reserved).toBe(7000n);
+    expect(plan.split).toEqual({ topblast: 7200n, creator: 1800n, protocol: 1000n });
+    expect(plan.reserved).toBe(7200n);
     expect(plan.paid).toBe(0n);
     expect(plan.available).toBe(0n);
   });
   it("keeps the same sample holders in an unfunded second launch unpaid", () => {
     const state = runRehearsal(newRehearsal());
-    expect(rehearsalPlan(state).paid).toBe(7000n);
+    expect(rehearsalPlan(state).paid).toBe(7200n);
     expect(rehearsalPlan(state, "SIM-B").paid).toBe(0n);
     expect(rehearsalPlan(state, "SIM-B").allocations).toEqual([]);
   });

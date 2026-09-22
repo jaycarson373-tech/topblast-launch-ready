@@ -8,6 +8,7 @@ import { assertLaunchReady } from "@/lib/readiness";
 import { getTreasuryBalance, solanaRpc } from "@/lib/solana/rpc";
 import { canAccessTestLaunch } from "@/lib/test-launch-access";
 import { assertTestLaunchReady } from "@/lib/test-launch-readiness";
+import { checkPrepareBudget } from "@/lib/prepare-budget";
 
 export const runtime = "nodejs";
 
@@ -15,10 +16,12 @@ export async function POST(request: Request) {
   try {
     const draft = launchDraftSchema.parse(await request.json());
     if (draft.isTest) {
-      if (!canAccessTestLaunch(request)) return NextResponse.json({ error: "Public test launches are currently closed" }, { status: 401 });
+      if (!canAccessTestLaunch(request, draft.creatorWallet)) return NextResponse.json({ error: "Controlled testing requires an approved creator wallet. Public launches remain closed." }, { status: 403 });
       await assertTestLaunchReady();
       if (await solanaRpc<string>("getGenesisHash") !== "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d") throw new Error("Controlled venue tests require Solana mainnet");
     } else assertLaunchReady();
+    const rateLimit = await checkPrepareBudget("launch_prepare");
+    if (rateLimit) return rateLimit;
     validateMinimumReward(draft.allocation.topblastPercent);
     if (!draft.isTest && draft.venue === "pumpfun" && process.env.PUMPFUN_ENABLED !== "true") throw new Error("Pump.fun acceptance is pending. Creation is not enabled yet.");
     if (draft.creatorWallet === process.env.TOPBLAST_TREASURY_ADDRESS) throw new Error("Use a separate creator wallet so this launch can fund rewards");
@@ -41,7 +44,7 @@ export async function POST(request: Request) {
       prepared.raw = { ...prepared.raw, simulation: "passed" };
     }
     const launchId = await createLaunchDraft(draft, prepared.signedQuote, prepared.paymentTransaction, prepared.expiresAt);
-    return NextResponse.json({ launchId, ...prepared });
+    return NextResponse.json({ launchId, ...prepared, rewardTreasury: process.env.TOPBLAST_TREASURY_ADDRESS, protocolTreasury: process.env.PROTOCOL_TREASURY_ADDRESS });
   } catch (error) {
     if (error instanceof StonkFunApiError) {
       return NextResponse.json({ error: error.message, code: error.code, retryable: error.retryable }, { status: error.status });
