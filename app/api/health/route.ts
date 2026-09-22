@@ -19,6 +19,7 @@ export async function GET() {
   let workerFresh = false;
   let signerReady = false;
   let signerError: string | null = null;
+  let payoutMode = process.env.PAYOUT_MODE ?? "manual_wallet";
   let enginePaused = true;
   let acceptedCycle = false;
   let pumpSchemaReady = false;
@@ -26,10 +27,11 @@ export async function GET() {
   if (readiness.database) {
     const { data, error } = await getAdminDb().from("system_config").select("key,value").in("key", ["worker_heartbeat", "reward_engine_paused", "production_acceptance"]);
     databaseReachable = !error;
-    const heartbeat = data?.find((row) => row.key === "worker_heartbeat")?.value as { at?: string; pipeline?: string; signerReady?: boolean; signerError?: string | null } | undefined;
+    const heartbeat = data?.find((row) => row.key === "worker_heartbeat")?.value as { at?: string; pipeline?: string; payoutMode?: string; signerReady?: boolean; signerError?: string | null } | undefined;
     workerFresh = Boolean(heartbeat?.at && heartbeat.pipeline === "operational" && Date.now() - new Date(heartbeat.at).getTime() < 180_000);
     signerReady = heartbeat?.signerReady === true;
     signerError = typeof heartbeat?.signerError === "string" ? heartbeat.signerError : null;
+    payoutMode = typeof heartbeat?.payoutMode === "string" ? heartbeat.payoutMode : payoutMode;
     enginePaused = data?.find((row) => row.key === "reward_engine_paused")?.value !== false;
     const { count } = await getAdminDb().from("transaction_proofs").select("id", { count: "exact", head: true }).eq("kind", "distribution").not("signature", "is", null);
     // A lone distribution is not evidence of a complete launch-to-restart cycle.
@@ -106,7 +108,7 @@ export async function GET() {
       treasuryConfigured: readiness.treasury,
       treasuryRpcReachable,
       treasurySol,
-      payoutMode: process.env.PAYOUT_MODE ?? "manual_wallet",
+      payoutMode,
       launchesEnabled: readiness.launchesEnabled,
       dryRun: readiness.dryRun,
       workerFresh,

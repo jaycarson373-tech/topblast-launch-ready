@@ -15,9 +15,9 @@ it("resolves a stalled health check within twelve seconds without claiming avail
   expect(host.querySelector('a[href="/test"]')).toBeNull();
   expect(host.querySelector('a[href="/launch"]')?.textContent).toBe("Launch token");
 });
-it("keeps pre-launch availability truthful without promoting a test mode", async () => {
+it("keeps locked availability truthful without promoting a test mode", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ launchReady: false, rewardsReady: false, controlledTesting: true, venues: {}, checks: { dryRun: true } }, { status: 503 })));
-  await render(); expect(host.textContent).toContain("PRE-LAUNCH");
+  await render(); expect(host.textContent).toContain("LOCKED");
   expect(host.textContent).not.toContain("AVAILABLE");
   expect(host.querySelector('a[href="/test"]')).toBeNull();
 });

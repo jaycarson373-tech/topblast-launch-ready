@@ -131,7 +131,16 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
 
   useEffect(() => {
     const registry = getWallets();
-    const refresh = () => { const items = registry.get() as readonly WalletLike[]; setWallets(items); setSelectedWallet((current) => current || items[0]?.name || ""); };
+    const refresh = () => {
+      // Some extensions register the same wallet through more than one
+      // discovery bridge. Keep one launch button per visible wallet name.
+      const discovered = registry.get() as readonly WalletLike[];
+      const unique = [...new Map(discovered
+        .filter((item) => item.features["standard:connect"] && item.features["solana:signTransaction"])
+        .map((item) => [item.name, item])).values()];
+      setWallets(unique);
+      setSelectedWallet((current) => unique.some((item) => item.name === current) ? current : unique[0]?.name || "");
+    };
     refresh();
     return registry.on("register", refresh);
   }, []);
@@ -298,7 +307,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
         <div className="field"><label htmlFor="twitter">X URL</label><input id="twitter" name="twitter" type="url" placeholder="https://x.com/..." /></div>
         <div className="field"><label htmlFor="website">Website URL</label><input id="website" name="website" type="url" placeholder="https://..." /></div>
         <div className="field"><label htmlFor="telegram">Telegram URL</label><input id="telegram" name="telegram" type="url" placeholder="https://t.me/..." /></div>
-        {venue === "stonkfun" && <p className="notice">Created through StonkFun’s standard LaunchLab configuration. Venue trading fees are set onchain by StonkFun and shown in the review. TopBlast allocation applies only to explicit reward-funding deposits.</p>}
+        {venue === "stonkfun" && <p className="notice">Created through StonkFun’s standard LaunchLab configuration. The TopBlast treasury is the onchain creator-fee recipient. The worker credits only finalized fee transfers proven to come from this exact launch, then applies the fixed allocation automatically.</p>}
       </div>
       <div className="form-section">
         <div className="section-label">Pair</div>
@@ -334,13 +343,13 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
           <p className="notice"><strong>Permanent configuration:</strong> allocation and token metadata are fixed at launch. {prepared.review.venue === "stonkfun" ? "The onchain creator-fee recipient is the TopBlast treasury. Only finalized fee forwards matching this exact pool can fund its rewards; the worker sends the creator share and eligible-holder airdrops." : "Pump is beta. Creator fees use a creator-wide vault and are not credited until safely attributed per launch. No initial buy, native cashback, mayhem, non-SOL pair, or PumpSwap graduation support."}</p>
           {prepared.review.venue === "pumpfun" && <p className="notice">Shown SOL cost is the simulated debit for network fees and account creation. No initial buy. Creator fees follow Pump.fun’s schedule. TopBlast rewards require a separate creator deposit.</p>}
           {prepared.raw?.creationMethod === "stonk_launchlab" && <p className="notice">StonkFun standard launch through its published LaunchLab configuration. Shown SOL cost covers simulated network fees and account rent, not an initial buy or reward funding. Stonk’s token listing may take time to appear.</p>}
-          {prepared.raw?.venueFees && <p className="notice">Venue trading fees: {((Number(prepared.raw.venueFees.protocolRate) + Number(prepared.raw.venueFees.platformRate) + Number(prepared.raw.venueFees.creatorRate)) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% total, including {(Number(prepared.raw.venueFees.creatorRate) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% creator fee. These are separate from the TopBlast deposit allocation.</p>}
+          {prepared.raw?.venueFees && <p className="notice">Venue trading fees: {((Number(prepared.raw.venueFees.protocolRate) + Number(prepared.raw.venueFees.platformRate) + Number(prepared.raw.venueFees.creatorRate)) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% total, including {(Number(prepared.raw.venueFees.creatorRate) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% creator fee. For Stonk launches, the fixed TopBlast allocation applies to each verified creator-fee transfer received by the launch treasury.</p>}
           <p className="notice">Network: Solana mainnet. Fee payer: <span className="mono">{wallet?.address}</span>. Estimated SOL debit: {prepared.payment.sol ?? prepared.payment.lamports ?? "See wallet"} {prepared.payment.sol !== undefined ? "SOL" : "lamports"}. Launch program: <span className="mono">{prepared.payment.recipient ?? "Shown by your wallet"}</span>.</p>
           <p className="notice">{prepared.expiresAt && new Date(prepared.expiresAt).getTime() <= now ? "Review expired. Prepare a fresh review before signing." : `Estimated signing window: ${prepared.expiresAt ? Math.max(0, Math.ceil((new Date(prepared.expiresAt).getTime() - now) / 1000)) + " seconds" : "limited"}. Review now, then approve promptly in your wallet. Solana block height determines actual expiry.`}</p>
           <button type="button" className="button" disabled={busy || Boolean(prepared.expiresAt && new Date(prepared.expiresAt).getTime() <= now)} onClick={signAndSubmit}>Confirm in wallet</button> <button type="button" className="button button-secondary" disabled={busy} onClick={() => setPrepared(null)}>Edit / refresh review</button>
         </div>
       )}
-      {result && <div className={result.trackerStatus === "active" ? "success" : "error"}><strong>{result.trackerStatus === "active" ? "Launch complete. TopBlast tracking active." : "Token launched. Tracker registration needs recovery."}</strong><br />Mint: {result.mint}<br />Pool: {result.pool}<br />Signature: {result.signature}<br /><a href="/creator">Open creator dashboard to fund and verify</a>{result.mint && (!testMode || publicTestListing) && <> · <a href={`/token/${result.mint}`}>Open token page</a></>}{result.trackerStatus !== "active" && <><br />Use the saved payment status recovery to retry tracking. No second payment is required.</>}</div>}
+      {result && <div className={result.trackerStatus === "active" ? "success" : "error"}><strong>{result.trackerStatus === "active" ? "Launch complete. TopBlast tracking active." : "Token launched. Tracker registration needs recovery."}</strong><br />Mint: {result.mint}<br />Pool: {result.pool}<br />Signature: {result.signature}<br /><a href="/creator">Open creator dashboard</a>{result.mint && (!testMode || publicTestListing) && <> · <a href={`/token/${result.mint}`}>Open token page</a></>}{result.trackerStatus !== "active" && <><br />Use the saved transaction status recovery to retry tracking. No second transaction is required.</>}</div>}
       <div className="form-footer">
         <p className="notice">Your wallet signs the reviewed launch transaction. TopBlast never receives your private key.</p>
         {!prepared && !receipt && !result && <button className="button venue-button" disabled={busy || imageLoading || total !== 100 || !venueReady}>{busy ? "Preparing..." : !runtime ? "Checking availability..." : !venueReady ? "Temporarily unavailable" : wallet ? venue === "pumpfun" ? "Launch on Pump.fun" : "Launch on STONK" : "Connect and launch"}</button>}
