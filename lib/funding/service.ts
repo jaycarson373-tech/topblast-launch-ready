@@ -104,8 +104,9 @@ export async function reconcileLaunchFunding(intentId: string) {
   if (!finality) {
     const height = await solanaRpc<number>("getBlockHeight", [{ commitment: "finalized" }]);
     if (height > Number(intent.last_valid_block_height)) {
-      await db.from("funding_intents").update({ status: "expired", error_message: "Transaction expired before finalization", updated_at: new Date().toISOString() }).eq("id", intentId).in("status", ["submitted", "uncertain"]);
-      return { status: "expired", signature: intent.signature, launchId: intent.launch_id };
+      const message = "Expired blockhash; archival reconciliation required before another funding transfer";
+      await db.from("funding_intents").update({ status: "uncertain", error_message: message, updated_at: new Date().toISOString() }).eq("id", intentId).in("status", ["submitted", "uncertain"]);
+      return { status: "uncertain_expired", signature: intent.signature, launchId: intent.launch_id };
     }
     return { status: "submitted", signature: intent.signature, launchId: intent.launch_id };
   }

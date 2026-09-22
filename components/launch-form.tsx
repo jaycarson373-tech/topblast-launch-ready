@@ -296,7 +296,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
       <div className="form-section">
         <div className="section-label">TopBlast rewards</div>
         <h3>Fund the blast zone.</h3>
-        <p className="notice">When eligible holders fall below their verified average entry, they share the funded TopBlast reward pool. Creators claim venue fees to their wallet, then deposit a declared gross amount through the creator dashboard, and the fixed allocation is enforced by that transaction.</p>
+        <p className="notice">When eligible holders fall below their verified average entry, they share the funded TopBlast reward pool. Venue fees first reach or are claimed by the creator under the venue’s rules. The creator then deposits a declared gross amount through the dashboard, and the fixed allocation is enforced by that transaction.</p>
         <p className="notice"><strong>Split 100% of your share.</strong> These controls divide your {CREATOR_REWARD_PERCENT}% share, not the gross funding amount.</p>
         <div className="allocation-grid allocation-grid-two">
           {(["topblastPercent", "creatorPercent"] as const).map((key) => (
