@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { publicLink } from "../lib/site-links";
+import { readFileSync } from "node:fs";
 
 describe("public footer destinations", () => {
   it("keeps missing social profiles unavailable", () => {
@@ -16,4 +17,15 @@ describe("public footer destinations", () => {
     }
     expect(publicLink("https://unconfirmed.example", ["dexscreener.com"], "https://dexscreener.com/solana")).toBe("https://dexscreener.com/solana");
   });
+});
+
+it("keeps public navigation and product pages free of test-now promotions", () => {
+  for (const file of ["components/site-nav.tsx", "app/page.tsx", "app/launch/page.tsx", "app/docs/page.tsx"]) {
+    const source = readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
+    expect(source).not.toMatch(/test now|try the free test|test without funds|run free simulation/i);
+    expect(source).not.toMatch(/href=["']\/test["']/);
+  }
+  const docs = readFileSync(new URL("../app/docs/page.tsx", import.meta.url), "utf8");
+  expect(docs).toContain("They are not proof of live payouts");
+  expect(docs).toContain("Dry run locks funding and payout submission");
 });
