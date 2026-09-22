@@ -30,15 +30,26 @@ async function claim(db: SupabaseClient, type: string, id: string, owner: string
 
 export async function reconcileMarket(db: SupabaseClient, row: MarketRow, owner: string) {
   if (!await claim(db, "market", row.launch_id, owner)) return;
+  // Price observations do not certify history completeness. Keep the public
+  // price available while historical blocks catch up; epoch planning remains gated.
+  await recordMarketPrice(db, row);
   const finalizedSlot = await solanaRpc<number>("getSlot", [{ commitment: "finalized" }]);
   let cursor = Math.max(Number(row.last_indexed_slot ?? 0), Number(row.launch_slot) - 1);
   const end = Math.min(finalizedSlot, cursor + Math.max(10, Number(process.env.INDEX_BLOCK_BATCH_SIZE ?? 100)));
   let blockhash = row.last_indexed_blockhash ?? null;
+  const startedAt = Date.now();
+  let leaseRenewedAt = startedAt;
   if (end > cursor) {
     const produced = await solanaRpc<number[]>("getBlocks", [cursor + 1, end, { commitment: "finalized" }]);
     for (const slot of produced) {
-      const block = await solanaRpc<{ blockhash: string; previousBlockhash: string; blockTime: number | null; transactions: FinalizedBlockTransaction[] } | null>("getBlock", [slot, { commitment: "finalized", encoding: "jsonParsed", transactionDetails: "full", rewards: false, maxSupportedTransactionVersion: 0 }]);
+      // RPC parses legacy/v0/v1 into the same instruction/account JSON. No
+      // legacy SDK wire decoder is used here and v1 compute-fee headers are not basis.
+      const block = await solanaRpc<{ blockhash: string; previousBlockhash: string; blockTime: number | null; transactions: FinalizedBlockTransaction[] } | null>("getBlock", [slot, { commitment: "finalized", encoding: "jsonParsed", transactionDetails: "full", rewards: false, maxSupportedTransactionVersion: 1 }]);
       if (!block) throw new Error(`Finalized block ${slot} is unavailable`);
+      if (Date.now() - leaseRenewedAt >= 20_000) {
+        if (!await claim(db, "market", row.launch_id, owner)) throw new Error("Market lease lost; stopping reconciliation");
+        leaseRenewedAt = Date.now();
+      }
       if (blockhash && block.previousBlockhash !== blockhash) throw new Error(`Finalized chain continuity failed at slot ${slot}`);
       for (const [transactionIndex, transaction] of block.transactions.entries()) {
         if (transaction.transaction.signatures[0] === row.launch_signature) continue;
@@ -58,25 +69,36 @@ export async function reconcileMarket(db: SupabaseClient, row: MarketRow, owner:
         }
       }
       blockhash = block.blockhash;
+      cursor = slot;
+      const checkpoint = await db.from("tracked_markets").update({ last_indexed_slot: cursor, last_indexed_blockhash: blockhash, history_complete: false }).eq("launch_id", row.launch_id);
+      if (checkpoint.error) throw checkpoint.error;
+      if (Date.now() - startedAt > 45_000) break;
     }
-    cursor = end;
+    // Only skip unproduced slots after every produced block was processed.
+    if (!produced.length || cursor === produced.at(-1)) cursor = end;
     await db.from("chain_event_inbox").update({ status: "confirmed", processed_at: new Date().toISOString(), last_error: null }).eq("launch_id", row.launch_id).lte("observed_slot", cursor).in("status", ["pending", "processing", "failed"]);
   }
+  const checkpoint = await db.from("tracked_markets").update({
+    last_indexed_slot: cursor, last_indexed_blockhash: blockhash, history_complete: cursor >= finalizedSlot, price_status: "fresh",
+    last_reconciled_at: new Date().toISOString(), updated_at: new Date().toISOString(), tracker_error: null,
+  }).eq("launch_id", row.launch_id);
+  if (checkpoint.error) throw checkpoint.error;
+  return cursor >= finalizedSlot;
+}
+
+async function recordMarketPrice(db: SupabaseClient, row: MarketRow) {
   const observation = await (row.venue === "pumpfun" ? observePumpPrice : observeLaunchLabPrice)({
     launchId: row.launch_id, marketAddress: row.market_address, baseMint: row.base_mint, quoteMint: row.quote_mint,
     creatorAddress: row.creator_address, configAddress: row.config_address, platformConfigAddress: row.platform_config_address,
     baseVault: row.base_vault, quoteVault: row.quote_vault, tokenDecimals: row.base_decimals,
     baseTokenProgram: row.base_token_program, quoteTokenProgram: row.quote_token_program,
   });
-  await db.from("price_observations").upsert({
+  const { error } = await db.from("price_observations").upsert({
     launch_id: row.launch_id, market_address: row.market_address, slot: observation.slot, block_time: observation.blockTime,
     price_quote_atoms_per_token: observation.priceQuoteAtomsPerToken.toString(), source: row.venue === "pumpfun" ? "pump_curve" : "launchlab_pool",
     payload_hash: hash({ slot: observation.slot, price: observation.priceQuoteAtomsPerToken.toString() }),
   }, { onConflict: "launch_id,slot,source", ignoreDuplicates: true });
-  await db.from("tracked_markets").update({
-    last_indexed_slot: cursor, last_indexed_blockhash: blockhash, history_complete: cursor >= finalizedSlot, price_status: "fresh",
-    last_reconciled_at: new Date().toISOString(), updated_at: new Date().toISOString(), tracker_error: null,
-  }).eq("launch_id", row.launch_id);
+  if (error) throw error;
 }
 
 export function activityOrdinal(transactionIndex: number, eventIndex: number) {

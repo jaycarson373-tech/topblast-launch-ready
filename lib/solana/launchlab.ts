@@ -82,9 +82,11 @@ export async function observeLaunchLabPrice(market: {
   if (pool.baseMint !== market.baseMint || pool.quoteMint !== market.quoteMint || pool.creatorAddress !== market.creatorAddress || pool.configAddress !== market.configAddress || pool.platformConfigAddress !== market.platformConfigAddress || pool.baseVault !== market.baseVault || pool.quoteVault !== market.quoteVault) throw new Error("LaunchLab price account identity mismatch");
   const expectedProgramFlag = (market.baseTokenProgram === TOKEN_2022_PROGRAM ? 1 : 0) | (market.quoteTokenProgram === TOKEN_2022_PROGRAM ? 2 : 0);
   if (pool.tokenProgramFlag !== expectedProgramFlag) throw new Error("LaunchLab price token program flag mismatch");
-  const virtualBase = pool.data.readBigUInt64LE(37);
-  const virtualQuote = pool.data.readBigUInt64LE(45);
-  if (!virtualBase || !virtualQuote) throw new Error("Invalid LaunchLab virtual reserves");
+  // Official LaunchConstantProductCurve.getPoolPrice uses virtualB + realB
+  // over virtualA - realA. Virtual reserves alone are only the initial price.
+  const virtualBase = pool.data.readBigUInt64LE(37) - pool.data.readBigUInt64LE(53);
+  const virtualQuote = pool.data.readBigUInt64LE(45) + pool.data.readBigUInt64LE(61);
+  if (virtualBase <= 0n || virtualQuote <= 0n) throw new Error("Invalid LaunchLab effective reserves");
   const blockTime = await solanaRpc<number | null>("getBlockTime", [response.context.slot]);
   if (!Number.isSafeInteger(blockTime)) throw new Error("Finalized price timestamp unavailable");
   const priceQuoteAtomsPerToken = virtualQuote * 10n ** BigInt(market.tokenDecimals) / virtualBase;

@@ -16,6 +16,7 @@ const owner = `${process.env.RAILWAY_REPLICA_ID ?? "local"}:${process.pid}:${ran
 const port = Number(process.env.PORT ?? 0);
 let lastCycleAt: string | null = null;
 let lastCycleError: string | null = null;
+let needsBackfill = false;
 
 const healthServer = port > 0 ? createServer((request, response) => {
   if (request.url === "/api/live" || request.url === "/") {
@@ -37,6 +38,7 @@ async function runCycle() {
   }
   lastCycleAt = new Date().toISOString();
   lastCycleError = null;
+  needsBackfill = false;
   const { error: heartbeatError } = await db.from("system_config").upsert({
     key: "worker_heartbeat",
     value: { at: lastCycleAt, owner, mode: dryRun ? "dry_run" : "approval_required", payoutMode: "wallet_approved", pipeline: "operational" },
@@ -60,15 +62,19 @@ async function runCycle() {
   if (marketError) throw marketError;
   for (const market of markets ?? []) {
     try {
-      await reconcileMarket(db, market, owner);
-      const venueMarket = await launchVenue(market.venue).getMarketData(market.base_mint, market.market_address);
-      await db.from("launches").update({ price_usd: venueMarket.priceUsd, market_cap_usd: venueMarket.marketCapUsd, volume_24h_usd: venueMarket.volume24hUsd, liquidity_usd: venueMarket.liquidityUsd, updated_at: new Date().toISOString() }).eq("id", market.launch_id);
+      if (await reconcileMarket(db, market, owner) === false) needsBackfill = true;
     }
     catch (error) {
       const message = error instanceof Error ? error.message : "market reconciliation failed";
       await db.from("tracked_markets").update({ tracker_error: message, price_status: "failed", updated_at: new Date().toISOString() }).eq("launch_id", market.launch_id);
       process.stderr.write(`${market.launch_id}: ${message}\n`);
     }
+    // A venue listing can lag a real onchain launch. Missing optional USD
+    // metrics must not mark a successfully reconciled tracker as failed.
+    try {
+      const venueMarket = await launchVenue(market.venue).getMarketData(market.base_mint, market.market_address);
+      await db.from("launches").update({ price_usd: venueMarket.priceUsd, market_cap_usd: venueMarket.marketCapUsd, volume_24h_usd: venueMarket.volume24hUsd, liquidity_usd: venueMarket.liquidityUsd, updated_at: new Date().toISOString() }).eq("id", market.launch_id);
+    } catch (error) { process.stderr.write(`${market.launch_id}: optional venue metrics unavailable: ${error instanceof Error ? error.message : "unknown error"}\n`); }
   }
 
   const { data: funding } = await db.from("funding_intents").select("id").in("status", ["submitted", "uncertain"]);
@@ -105,7 +111,7 @@ async function main() {
       process.stderr.write(`${new Date().toISOString()} worker error: ${lastCycleError}\n`);
     }
     if (process.env.REWARD_WORKER_ONCE === "true" || stopping) break;
-    await new Promise((resolve) => setTimeout(resolve, pollSeconds * 1_000));
+    await new Promise((resolve) => setTimeout(resolve, needsBackfill ? 1_000 : pollSeconds * 1_000));
   } while (!stopping);
 }
 
