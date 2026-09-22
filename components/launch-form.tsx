@@ -8,6 +8,7 @@ import { VenueBadge } from "@/components/venue-badge";
 import Image from "next/image";
 import { initialCreatorShare, updateCreatorShare, creatorShareToAllocation, CREATOR_SHARE_STEP, CREATOR_REWARD_PERCENT, FIXED_PROTOCOL_PERCENT } from "@/lib/launch-allocation";
 import { validateTokenImage } from "@/lib/token-image";
+import { clientJson } from "@/lib/client-json";
 
 const STONK_MINT = process.env.NEXT_PUBLIC_STONK_QUOTE_MINT ?? "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx";
 
@@ -61,6 +62,8 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
   const receiptRef = useRef<Receipt | null>(null);
   receiptRef.current = receipt;
   const statusRequest = useRef(false);
+  const [checkingStatus, setCheckingStatus] = useState(false);
+  const [autoCheckPaused, setAutoCheckPaused] = useState(false);
   const [failure, setFailure] = useState<{ message: string; retrySafe: boolean } | null>(null);
   const [now, setNow] = useState(Date.now());
   const [logo, setLogo] = useState("");
@@ -79,8 +82,8 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
       const saved = localStorage.getItem(receiptKey);
       if (saved) { const parsed = JSON.parse(saved); if (typeof parsed.launchId === "string" && typeof parsed.paymentSignature === "string") setReceipt(parsed); }
     } catch { /* Storage may be unavailable; in-memory state still prevents resubmission. */ }
-    fetch(testMode ? "/api/launch/test-readiness" : "/api/health", { cache: "no-store", signal: AbortSignal.timeout(25_000) })
-      .then(async (response) => { const body = await response.json(); if (testMode && !response.ok) throw new Error(body.error ?? "Test availability check failed"); return body; })
+    clientJson(testMode ? "/api/launch/test-readiness" : "/api/health", { cache: "no-store" }, 25_000, "Launch availability check timed out")
+      .then(({ response, body }) => { if (!response.ok) throw new Error(body.error ?? "Launch availability check failed"); return body; })
       .then((body) => setRuntime(testMode ? body : { ready: body.venues?.stonkfun ? body.venues.stonkfun.launchReady === true : body.ready === true, stonkBlockers: body.venues?.stonkfun?.blockers ?? [], missing: body.missing ?? [], pumpReady: body.venues?.pumpfun?.launchReady === true, pumpBlockers: body.venues?.pumpfun?.blockers ?? ["Pump.fun readiness has not been verified"] }))
       .catch((caught) => { if (testMode) setError(caught instanceof Error ? caught.message : "Test availability check failed"); setRuntime({ ready: false, missing: ["runtime health check"], stonkBlockers: ["Test or infrastructure checks unavailable"], pumpReady: false, pumpBlockers: ["Runtime health check unavailable"] }); });
   }, [receiptKey, testMode]);
@@ -88,8 +91,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
   async function checkTestAccess() {
     setBusy(true); setError(""); setRuntime(null);
     try {
-      const response = await fetch("/api/launch/test-readiness", { cache: "no-store", signal: AbortSignal.timeout(25_000) });
-      const body = await response.json();
+      const { response, body } = await clientJson("/api/launch/test-readiness", { cache: "no-store" }, 25_000, "Test availability check timed out");
       if (!response.ok) throw new Error(body.error ?? "Test availability check failed");
       setRuntime(body);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Test readiness unavailable"); setRuntime({ ready: false, pumpReady: false, missing: [], stonkBlockers: ["Availability check failed. Retry above."], pumpBlockers: ["Availability check failed. Retry above."] }); }
@@ -135,12 +137,13 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
   }, [walletObject, wallet?.address, prepared, receipt]);
 
   useEffect(() => {
-    if (!receipt || failure) return;
+    if (!receipt || failure || autoCheckPaused) return;
+    if (!busy) void checkStatus();
     const timer = window.setInterval(() => { void checkStatus(true); }, 8_000);
     return () => window.clearInterval(timer);
   // checkStatus deliberately follows the current receipt value.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [receipt?.launchId, receipt?.paymentSignature, failure]);
+  }, [receipt?.launchId, receipt?.paymentSignature, failure, autoCheckPaused]);
 
   useEffect(() => {
     if (!prepared || receipt) return;
@@ -160,6 +163,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
   }
 
   async function prepare(form: FormData) {
+    if (busy || prepared || receipt) return;
     setBusy(true); setError(""); setResult(null);
     try {
       const connected = wallet;
@@ -175,8 +179,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
         quoteMint: venue === "pumpfun" ? "So11111111111111111111111111111111111111112" : STONK_MINT, quoteSymbol: venue === "pumpfun" ? "SOL" : "STONK", feeTier: form.get("feeTier") ?? "1%", allocation,
         website: form.get("website"), twitter: form.get("twitter"), telegram: form.get("telegram"),
       };
-      const response = await fetch("/api/launch/prepare", { method: "POST", headers: requestHeaders(), body: JSON.stringify(payload) });
-      const body = await response.json();
+      const { response, body } = await clientJson("/api/launch/prepare", { method: "POST", headers: requestHeaders(), body: JSON.stringify(payload) }, 70_000, "Preparation timed out. No wallet signature was requested. Your details are still here; try preparing again.");
       if (!response.ok) throw new Error(body.error ?? "Could not prepare launch");
       setPrepared({ ...body, logo, review: { venue, quoteSymbol: payload.quoteSymbol, name: String(payload.name), symbol: String(payload.symbol).toUpperCase(), allocation: { ...allocation }, creatorShare: { ...creatorShare } } });
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not prepare launch"); }
@@ -202,15 +205,16 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
   async function checkStatus(quiet = false) {
     if (!receipt || statusRequest.current) return;
     statusRequest.current = true;
-    if (!quiet) setBusy(true); setError("");
+    setCheckingStatus(true);
+    if (!quiet) setError("");
     try {
-      const response = await fetch(`/api/launch/status/${encodeURIComponent(receipt.paymentSignature)}?launchId=${encodeURIComponent(receipt.launchId)}`, { cache: "no-store" });
-      const body = await response.json();
+      const { response, body } = await clientJson(`/api/launch/status/${encodeURIComponent(receipt.paymentSignature)}?launchId=${encodeURIComponent(receipt.launchId)}`, { cache: "no-store" }, 20_000, "Status check timed out. Your receipt is safe. Try Check launch status again; do not make another payment.");
       if (receiptRef.current?.paymentSignature !== receipt.paymentSignature) return;
       if (!response.ok) throw new Error(body.error ?? "Could not verify payment status. Keep this receipt and do not pay again.");
       complete(body);
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "Status check failed"); }
-    finally { statusRequest.current = false; if (!quiet) setBusy(false); }
+      setAutoCheckPaused(false);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Status check failed"); setAutoCheckPaused(true); }
+    finally { statusRequest.current = false; setCheckingStatus(false); }
   }
 
   function startFreshReview() {
@@ -222,7 +226,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
       localStorage.removeItem(receiptKey);
     } catch { setError("Could not save your receipt. Keep a copy and allow browser storage before starting again."); return; }
     receiptRef.current = null;
-    setReceipt(null); setFailure(null); setPrepared(null); setResult(null); setError("");
+    setReceipt(null); setFailure(null); setPrepared(null); setResult(null); setError(""); setAutoCheckPaused(false);
     mintSigner.current = null;
   }
 
@@ -247,8 +251,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
       setReceipt(pending);
       // Save only public identifiers, never signed transaction bytes or wallet secrets.
       try { localStorage.setItem(receiptKey, JSON.stringify(pending)); } catch { /* Show the receipt in the UI. */ }
-      const response = await fetch("/api/launch/submit", { method: "POST", headers: requestHeaders(), body: JSON.stringify({ launchId: prepared.launchId, signedQuote: prepared.signedQuote, signedTransaction: encodeBase64(signedTransaction), logo: prepared.logo }) });
-      const body = await response.json();
+      const { response, body } = await clientJson("/api/launch/submit", { method: "POST", headers: requestHeaders(), body: JSON.stringify({ launchId: prepared.launchId, signedQuote: prepared.signedQuote, signedTransaction: encodeBase64(signedTransaction), logo: prepared.logo }) }, 70_000, "Submission response timed out. Your transaction may still land. Use Check launch status with the saved receipt; do not pay again.");
       if (!response.ok) throw new Error(body.error ?? "Could not confirm launch submission. Check status before taking any further action.");
       complete(body);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Launch failed"); }
@@ -259,6 +262,15 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
 
   return (
     <form className={`panel launch-form venue-theme-${venue}`} onSubmit={(event) => { event.preventDefault(); void prepare(new FormData(event.currentTarget)); }}>
+      {receipt && <section className="panel launch-recovery" aria-label="Recover your previous launch" aria-busy={checkingStatus}>
+        <div className="section-label">Previous launch receipt</div>
+        <h3>{failure ? "Launch did not complete" : result ? "Token launched. Tracking recovery pending" : "Checking your previous launch"}</h3>
+        <p className="notice">{failure?.message ?? "The token form is locked to prevent a duplicate payment. Recover your previous launch here first. No wallet connection is needed to check it."}</p>
+        <div className="recovery-actions"><button type="button" className="button" disabled={checkingStatus} onClick={() => void checkStatus()}>{checkingStatus ? "Checking saved receipt..." : "Check launch status"}</button>{failure?.retrySafe && <button type="button" className="button button-secondary" disabled={busy || checkingStatus} onClick={startFreshReview}>Save receipt and start a fresh review</button>}</div>
+        {checkingStatus && <p className="notice" role="status">Checking may take up to 20 seconds. Your wallet will not open.</p>}
+        <details><summary>View saved receipt</summary><p className="mono">Launch: {receipt.launchId}<br />Transaction: <a href={`https://solscan.io/tx/${encodeURIComponent(receipt.paymentSignature)}`} target="_blank" rel="noreferrer">{receipt.paymentSignature}</a></p></details>
+      </section>}
+      {error && <div className="error" role="alert">{error}</div>}
       {testMode && <section className="form-section"><div className="section-label">Test with your own wallet</div><p className="notice">1. Connect wallet. 2. Choose your venue and token details. 3. Review the cost and approve in your wallet.</p><p className="notice">Real mainnet costs. Hidden on TopBlast, not private onchain or at the venue. No token is created until you approve the reviewed transaction. Reward payouts remain separately gated.</p>{walletPicker}{wallet && <p className="notice">Connected: <span className="mono">{wallet.address}</span></p>}<p className="notice" role="status">{!runtime ? "Checking test availability..." : venueReady ? "Test launch available. No access token required." : "Testing unavailable. Check the message below or retry."}</p><button type="button" className="button button-secondary" disabled={busy || Boolean(prepared)} onClick={() => void checkTestAccess()}>Refresh test availability</button></section>}
       {runtime && !venueReady && <div className="error"><strong>{venue === "pumpfun" ? "Pump.fun unavailable." : "StonkFun unavailable."}</strong> The transaction button stays locked until infrastructure checks pass. No payment can be submitted here.<ul>{(venue === "pumpfun" ? runtime.pumpBlockers : runtime.stonkBlockers ?? []).map((blocker) => <li key={blocker}>{blocker}</li>)}</ul></div>}
       <fieldset disabled={busy || Boolean(prepared) || Boolean(receipt)}>
@@ -313,8 +325,6 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
           <button type="button" className="button" disabled={busy || Boolean(prepared.expiresAt && new Date(prepared.expiresAt).getTime() <= now)} onClick={signAndSubmit}>Confirm in wallet</button> <button type="button" className="button button-secondary" disabled={busy} onClick={() => setPrepared(null)}>Edit / refresh review</button>
         </div>
       )}
-      {receipt && <div className="panel" style={{ marginTop: 20 }} role="status"><h3>{failure ? "Launch did not complete" : result ? "Token launched. Tracking recovery pending" : "Launch confirmation pending"}</h3><p className="notice">{failure?.message ?? "Keep this receipt. Check status to recover after a delay or refresh. Do not make another payment."}</p><p className="mono">Launch: {receipt.launchId}<br />Transaction: <a href={`https://solscan.io/tx/${encodeURIComponent(receipt.paymentSignature)}`} target="_blank" rel="noreferrer">{receipt.paymentSignature}</a></p><button type="button" className="button" disabled={busy} onClick={() => void checkStatus()}>Check launch status</button>{failure?.retrySafe && <> <button type="button" className="button button-secondary" disabled={busy} onClick={startFreshReview}>Save receipt and start a fresh review</button></>}</div>}
-      {error && <div className="error">{error}</div>}
       {result && <div className={result.trackerStatus === "active" ? "success" : "error"}><strong>{result.trackerStatus === "active" ? "Launch complete. TopBlast tracking active." : "Token launched. Tracker registration needs recovery."}</strong><br />Mint: {result.mint}<br />Pool: {result.pool}<br />Signature: {result.signature}{result.trackerStatus !== "active" && <><br />Use the saved payment status recovery to retry tracking. No second payment is required.</>}</div>}
       <div className="form-footer">
         <p className="notice">Your wallet signs the reviewed launch transaction. TopBlast never receives your private key.</p>
