@@ -1,7 +1,7 @@
 import { getAdminDb } from "@/lib/db/server";
 import { runtimeReadiness } from "@/lib/readiness";
 
-// Only called after operator authentication. This does not open public creation.
+// Called after explicit test-access checks. Public listings and payouts remain separately gated.
 export async function assertTestLaunchReady() {
   const readiness = runtimeReadiness();
   if (readiness.missing.length) throw new Error(`Missing: ${readiness.missing.join(", ")}`);

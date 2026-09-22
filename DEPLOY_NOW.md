@@ -125,6 +125,16 @@ Open `/admin`, enter that token, and confirm the exact treasury public address a
 
 ## 7. Activate controlled launches
 
+### Public test-page access
+
+`PUBLIC_TEST_LAUNCHES_ENABLED=true` in Vercel opens `/launch/test` to any creator wallet without the admin token. The page checks readiness automatically. Connect a wallet, select the venue, fill the token details, then review and sign the exact launch transaction. This is real mainnet spending, not a devnet faucet or free simulation.
+
+This switch does not enable ordinary public launches, admin actions, funding or payouts. Test launches stay excluded from TopBlast's public listings; the token and transaction remain public onchain and at the venue. The creator pays their own transaction. Worker health, pair checks, simulation, durable payment binding and exact signature validation remain enforced. No database migration or Railway variable is required for this web/API-only access switch.
+
+To close anonymous test creation, set this flag to `false` and redeploy. Existing operator-authenticated API access remains available; saved payment status recovery does not require this flag. Never ask a user to pay again merely because testing was closed.
+
+### Ordinary public launch activation
+
 After treasury review, change `LAUNCHES_ENABLED=true` in Vercel and the dedicated Railway worker, then redeploy. Enable `PUMPFUN_ENABLED=true` in both only when including Pump in controlled testing. `/api/health` must report the selected venue's `launchReady=true`; this does not certify rewards or replace the acceptance cycle.
 
 Leave these unchanged:

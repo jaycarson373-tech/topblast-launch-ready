@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { isAdminRequest } from "@/lib/admin-auth";
+import { canAccessTestLaunch } from "@/lib/test-launch-access";
 import { assertTestLaunchReady } from "@/lib/test-launch-readiness";
 import { GET as getHealth } from "@/app/api/health/route";
 
 export async function GET(request: Request) {
-  if (!isAdminRequest(request)) return NextResponse.json({ error: "Operator authorization required" }, { status: 401 });
+  if (!canAccessTestLaunch(request)) return NextResponse.json({ error: "Public test launches are currently closed" }, { status: 401 });
   try {
     await assertTestLaunchReady();
     const health = await (await getHealth()).json();

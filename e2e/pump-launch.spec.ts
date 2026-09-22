@@ -31,7 +31,7 @@ for (const responseMode of ["timeout", "tracker_pending"] as const) {
     await page.route("**/api/**", (route) => route.abort());
     await page.route("**/api/health", (route) => route.fulfill({ json: { ready: false, missing: [], venues: { stonkfun: { launchReady: false }, pumpfun: { launchReady: true, blockers: [] } } } }));
     await page.route("**/api/launch/test-readiness", (route) => {
-      expect(route.request().headers().authorization).toBe("Bearer fixture-operator-token");
+      expect(route.request().headers().authorization).toBeUndefined();
       return route.fulfill({ json: { ready: true, pumpReady: true, missing: [], pumpBlockers: [] } });
     });
     const launchId = "00000000-0000-4000-8000-000000000001";
@@ -39,7 +39,7 @@ for (const responseMode of ["timeout", "tracker_pending"] as const) {
       const input = route.request().postDataJSON();
       expect(input.venue).toBe(venue); expect(input.creatorWallet).toBe(creator.toBase58());
       expect(input.isTest).toBe(testMode);
-      if (testMode) expect(route.request().headers().authorization).toBe("Bearer fixture-operator-token");
+      if (testMode) expect(route.request().headers().authorization).toBeUndefined();
       const mint = new PublicKey(venue === "pumpfun" ? input.pumpMint : input.launchMint);
       // Two-signer fixture tests mint signing without constructing a real Pump launch.
       const transaction = new Transaction({ feePayer: creator, recentBlockhash: Keypair.generate().publicKey.toBase58() }).add(
@@ -52,7 +52,7 @@ for (const responseMode of ["timeout", "tracker_pending"] as const) {
       const transaction = Transaction.from(Buffer.from(input.signedTransaction, "base64"));
       expect(transaction.signatures).toHaveLength(2);
       expect(transaction.signatures[1].signature?.some((value) => value !== 0)).toBe(true);
-      if (testMode) expect(route.request().headers().authorization).toBe("Bearer fixture-operator-token");
+      if (testMode) expect(route.request().headers().authorization).toBeUndefined();
       if (responseMode === "timeout") await route.abort();
       else await route.fulfill({ json: { status: "completed", mint: "fixture-mint", pool: "fixture-pool", signature: "fixture-signature", trackerStatus: "pending" } });
     });
@@ -60,9 +60,8 @@ for (const responseMode of ["timeout", "tracker_pending"] as const) {
 
     await page.goto(testMode ? "/launch/test" : "/launch");
     if (testMode) {
-      await expect(page.getByRole("button", { name: "Activation pending", exact: true })).toBeDisabled();
-      await page.getByLabel("Operator access token").fill("fixture-operator-token");
-      await page.getByRole("button", { name: "Check test access", exact: true }).click();
+      await expect(page.getByLabel("Operator access token")).toHaveCount(0);
+      await expect(page.getByText("Test launch available. No access token required.", { exact: true })).toBeVisible();
     }
     await page.getByLabel("Launch venue").selectOption(venue);
     await page.getByLabel("Token name").fill("Pump fixture");
@@ -78,7 +77,7 @@ for (const responseMode of ["timeout", "tracker_pending"] as const) {
     await expect(page.getByRole("heading", { name: "Payment verification pending" })).toBeVisible();
     if (responseMode === "tracker_pending") await expect(page.getByText("Token launched. Tracker registration needs recovery.", { exact: true })).toBeVisible();
     await page.reload();
-    if (testMode) await expect(page.getByLabel("Operator access token")).toHaveValue("");
+    if (testMode) await expect(page.getByLabel("Operator access token")).toHaveCount(0);
     await page.getByRole("button", { name: "Check launch status", exact: true }).click();
     await expect(page.getByText("Launch complete. TopBlast tracking active.", { exact: true })).toBeVisible();
     expect(signedPrompts).toBe(1); expect(submissions).toBe(1); expect(browserErrors).toEqual([]);

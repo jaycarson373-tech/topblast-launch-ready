@@ -43,7 +43,6 @@ const decodeBase64 = (value: string) => Uint8Array.from(atob(value), (character)
 const encodeBase64 = (value: Uint8Array) => btoa(String.fromCharCode(...value));
 
 export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
-  const [operatorToken, setOperatorToken] = useState("");
   const receiptKey = testMode ? `${RECEIPT_KEY}-test` : RECEIPT_KEY;
   const [venue, setVenue] = useState<"stonkfun" | "pumpfun">("stonkfun");
   const mintSigner = useRef<Keypair | null>(null);
@@ -68,26 +67,25 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
       const saved = localStorage.getItem(receiptKey);
       if (saved) { const parsed = JSON.parse(saved); if (typeof parsed.launchId === "string" && typeof parsed.paymentSignature === "string") setReceipt(parsed); }
     } catch { /* Storage may be unavailable; in-memory state still prevents resubmission. */ }
-    if (testMode) return;
-    fetch("/api/health", { cache: "no-store" })
-      .then((response) => response.json())
-      .then((body) => setRuntime({ ready: body.venues?.stonkfun ? body.venues.stonkfun.launchReady === true : body.ready === true, stonkBlockers: body.venues?.stonkfun?.blockers ?? [], missing: body.missing ?? [], pumpReady: body.venues?.pumpfun?.launchReady === true, pumpBlockers: body.venues?.pumpfun?.blockers ?? ["Pump.fun readiness has not been verified"] }))
-      .catch(() => setRuntime({ ready: false, missing: ["runtime health check"], pumpReady: false, pumpBlockers: ["Runtime health check unavailable"] }));
+    fetch(testMode ? "/api/launch/test-readiness" : "/api/health", { cache: "no-store" })
+      .then(async (response) => { const body = await response.json(); if (testMode && !response.ok) throw new Error(body.error ?? "Test availability check failed"); return body; })
+      .then((body) => setRuntime(testMode ? body : { ready: body.venues?.stonkfun ? body.venues.stonkfun.launchReady === true : body.ready === true, stonkBlockers: body.venues?.stonkfun?.blockers ?? [], missing: body.missing ?? [], pumpReady: body.venues?.pumpfun?.launchReady === true, pumpBlockers: body.venues?.pumpfun?.blockers ?? ["Pump.fun readiness has not been verified"] }))
+      .catch((caught) => { if (testMode) setError(caught instanceof Error ? caught.message : "Test availability check failed"); setRuntime({ ready: false, missing: ["runtime health check"], stonkBlockers: ["Test or infrastructure checks unavailable"], pumpReady: false, pumpBlockers: ["Runtime health check unavailable"] }); });
   }, [receiptKey, testMode]);
 
   async function checkTestAccess() {
     setBusy(true); setError(""); setRuntime(null);
     try {
-      const response = await fetch("/api/launch/test-readiness", { headers: { Authorization: `Bearer ${operatorToken}` }, cache: "no-store" });
+      const response = await fetch("/api/launch/test-readiness", { cache: "no-store" });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error ?? "Operator checks failed");
+      if (!response.ok) throw new Error(body.error ?? "Test availability check failed");
       setRuntime(body);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Test readiness unavailable"); }
     finally { setBusy(false); }
   }
 
   function requestHeaders(): Record<string, string> {
-    return { "Content-Type": "application/json", ...(testMode ? { Authorization: `Bearer ${operatorToken}` } : {}) };
+    return { "Content-Type": "application/json" };
   }
 
   useEffect(() => {
@@ -203,9 +201,11 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
     finally { setBusy(false); }
   }
 
+  const walletPicker = !wallet && <div className="wallet-picker"><select aria-label="Wallet" disabled={busy} value={selectedWallet} onChange={(event) => setSelectedWallet(event.target.value)}>{wallets.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select><button className="button button-secondary" type="button" disabled={busy} onClick={() => void connect().catch((caught) => setError(caught instanceof Error ? caught.message : "Wallet connection failed"))}>Connect wallet</button></div>;
+
   return (
     <form className={`panel launch-form venue-theme-${venue}`} onSubmit={(event) => { event.preventDefault(); void prepare(new FormData(event.currentTarget)); }}>
-      {testMode && <section className="form-section"><div className="section-label">Hidden acceptance launch</div><p className="notice">Real mainnet costs. Hidden on TopBlast, not private onchain or at the venue. Tracking and accounting remain enabled. No token is created until you approve the reviewed transaction in your wallet.</p><div className="field"><label htmlFor="operator-token">Operator access token</label><input id="operator-token" type="password" autoComplete="off" value={operatorToken} disabled={busy || Boolean(prepared)} onChange={(event) => { setOperatorToken(event.target.value); setRuntime(null); }} /></div><p className="notice">Use the existing admin access token, never a wallet private key. It stays in memory and is not saved by this page.</p><button type="button" className="button button-secondary" disabled={busy || !operatorToken || Boolean(prepared)} onClick={() => void checkTestAccess()}>Check test access</button></section>}
+      {testMode && <section className="form-section"><div className="section-label">Test with your own wallet</div><p className="notice">1. Connect wallet. 2. Choose your venue and token details. 3. Review the cost and approve in your wallet.</p><p className="notice">Real mainnet costs. Hidden on TopBlast, not private onchain or at the venue. No token is created until you approve the reviewed transaction. Reward payouts remain separately gated.</p>{walletPicker}{wallet && <p className="notice">Connected: <span className="mono">{wallet.address}</span></p>}<p className="notice" role="status">{!runtime ? "Checking test availability..." : venueReady ? "Test launch available. No access token required." : "Testing unavailable. Check the message below or retry."}</p><button type="button" className="button button-secondary" disabled={busy || Boolean(prepared)} onClick={() => void checkTestAccess()}>Refresh test availability</button></section>}
       {runtime && !venueReady && <div className="error"><strong>{venue === "pumpfun" ? "Pump.fun activation pending." : "Launch activation pending."}</strong> The transaction button stays locked until infrastructure checks pass. No payment can be submitted here.<ul>{(venue === "pumpfun" ? runtime.pumpBlockers : runtime.stonkBlockers ?? []).map((blocker) => <li key={blocker}>{blocker}</li>)}</ul></div>}
       <fieldset disabled={busy || Boolean(prepared) || Boolean(receipt)}>
       <div className="launch-venue-hint"><VenueBadge venue={venue} /><span>{venue === "pumpfun" ? "SOL pair · WSOL rewards" : "STONK pair · STONK rewards"}</span></div>
@@ -262,7 +262,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
         <p className="notice">Your wallet signs the reviewed launch transaction. TopBlast never receives your private key.</p>
         {!prepared && !receipt && !result && <button className="button venue-button" disabled={busy || total !== 100 || !venueReady}>{busy ? "Preparing..." : !venueReady ? "Activation pending" : wallet ? venue === "pumpfun" ? "Launch on Pump.fun" : "Launch on STONK" : "Connect and launch"}</button>}
       </div>
-      {!wallet && <div className="wallet-picker"><select aria-label="Wallet" value={selectedWallet} onChange={(event) => setSelectedWallet(event.target.value)}>{wallets.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select><button className="button button-secondary" type="button" onClick={() => void connect().catch((caught) => setError(caught instanceof Error ? caught.message : "Wallet connection failed"))}>Connect wallet</button></div>}
+      {!testMode && walletPicker}
       {wallet && <p className="notice">Connected: {walletName} · <span className="mono">{wallet.address}</span></p>}
     </form>
   );

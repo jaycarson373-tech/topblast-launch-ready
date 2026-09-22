@@ -6,7 +6,7 @@ import { submitLaunchSchema } from "@/lib/validation";
 
 import { paymentSignatureFromTransaction } from "@/lib/solana/transaction-signature";
 import { inspectSignedMessage } from "@/lib/solana/signed-message";
-import { isAdminRequest } from "@/lib/admin-auth";
+import { canAccessTestLaunch } from "@/lib/test-launch-access";
 
 export const runtime = "nodejs";
 
@@ -14,7 +14,7 @@ export async function POST(request: Request) {
   try {
     const input = submitLaunchSchema.parse(await request.json());
     const prepared = await verifyLaunchQuote(input.launchId, input.signedQuote);
-    if (prepared.isTest && !isAdminRequest(request)) return NextResponse.json({ error: "Operator authorization is required for test launches" }, { status: 401 });
+    if (prepared.isTest && !canAccessTestLaunch(request)) return NextResponse.json({ error: "Public test launches are currently closed. Keep your receipt and do not pay again." }, { status: 401 });
     inspectSignedMessage({ signedTransaction: input.signedTransaction, expectedMessageHash: prepared.paymentMessageHash, expectedPayer: prepared.creatorWallet });
     const paymentSignature = paymentSignatureFromTransaction(Buffer.from(input.signedTransaction, "base64"));
     await bindLaunchPayment(input.launchId, paymentSignature, input.signedTransaction);

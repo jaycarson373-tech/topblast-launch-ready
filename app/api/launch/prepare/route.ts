@@ -6,7 +6,7 @@ import { PUMP_SOL_MINT } from "@/lib/solana/pumpfun";
 import { launchDraftSchema, validateMinimumReward } from "@/lib/validation";
 import { assertLaunchReady } from "@/lib/readiness";
 import { getTreasuryBalance, solanaRpc } from "@/lib/solana/rpc";
-import { isAdminRequest } from "@/lib/admin-auth";
+import { canAccessTestLaunch } from "@/lib/test-launch-access";
 import { assertTestLaunchReady } from "@/lib/test-launch-readiness";
 
 export const runtime = "nodejs";
@@ -15,7 +15,7 @@ export async function POST(request: Request) {
   try {
     const draft = launchDraftSchema.parse(await request.json());
     if (draft.isTest) {
-      if (!isAdminRequest(request)) return NextResponse.json({ error: "Operator authorization is required for test launches" }, { status: 401 });
+      if (!canAccessTestLaunch(request)) return NextResponse.json({ error: "Public test launches are currently closed" }, { status: 401 });
       await assertTestLaunchReady();
       if (await solanaRpc<string>("getGenesisHash") !== "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d") throw new Error("Controlled venue tests require Solana mainnet");
     } else assertLaunchReady();

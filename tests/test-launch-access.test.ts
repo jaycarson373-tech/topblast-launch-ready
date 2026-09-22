@@ -20,6 +20,7 @@ function request(isTest: boolean, token?: string, venue = "stonkfun", creatorWal
 beforeEach(() => {
   vi.resetAllMocks();
   vi.stubEnv("ADMIN_API_TOKEN", "fixture-operator-token");
+  vi.stubEnv("PUBLIC_TEST_LAUNCHES_ENABLED", "false");
   vi.stubEnv("LAUNCHES_ENABLED", "false"); vi.stubEnv("PUMPFUN_ENABLED", "false");
   vi.stubEnv("TOPBLAST_TREASURY_ADDRESS", treasury);
   mocks.readiness.mockResolvedValue(undefined);
@@ -31,6 +32,21 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("controlled test launch boundary, no real transactions", () => {
+  it.each(["stonkfun", "pumpfun"])("opens token-free hidden %s tests only when explicitly enabled", async (venue) => {
+    vi.stubEnv("PUBLIC_TEST_LAUNCHES_ENABLED", "true");
+    expect((await POST(request(true, undefined, venue))).status).toBe(200);
+    expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ isTest: true, venue }), "quote", "unsigned", undefined);
+    expect((await POST(request(false, undefined, venue))).status).toBe(400);
+  });
+  it("public test access still requires worker health and a successful simulation", async () => {
+    vi.stubEnv("PUBLIC_TEST_LAUNCHES_ENABLED", "true");
+    mocks.readiness.mockRejectedValueOnce(new Error("Worker is stale"));
+    expect((await POST(request(true))).status).toBe(400);
+    expect(mocks.create).not.toHaveBeenCalled();
+    mocks.rpc.mockImplementation(async (method) => method === "getGenesisHash" ? "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d" : { value: { err: "InsufficientFunds" } });
+    expect((await POST(request(true))).status).toBe(400);
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
   it.each([undefined, "wrong-token"])("rejects unauthenticated test creation (%s)", async (token) => {
     expect((await POST(request(true, token))).status).toBe(401);
     expect(mocks.create).not.toHaveBeenCalled(); expect(mocks.save).not.toHaveBeenCalled();
