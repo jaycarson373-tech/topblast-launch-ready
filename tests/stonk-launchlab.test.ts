@@ -75,10 +75,10 @@ describe("Stonk's supported LaunchLab flow, simulated RPC only", () => {
     const tx = Transaction.from(Buffer.from(prepared.paymentTransaction, "base64"));
     expect(tx.signatures.map((item) => item.publicKey.toBase58())).toEqual([input.creatorWallet, input.launchMint]);
     expect(tx.signatures.every((item) => item.signature === null)).toBe(true);
-    expect(tx.instructions).toHaveLength(2);
-    expect(tx.instructions[1].programId.toBase58()).toBe(LAUNCHLAB_PROGRAM);
-    expect(tx.instructions[1].keys[3].pubkey.toBase58()).toBe(STONK_STANDARD_PLATFORM);
-    expect(tx.instructions[1].keys.at(-1)?.pubkey.toBase58()).toBe(ruleAddress.toBase58());
+    expect(tx.instructions).toHaveLength(3);
+    expect(tx.instructions[2].programId.toBase58()).toBe(LAUNCHLAB_PROGRAM);
+    expect(tx.instructions[2].keys[3].pubkey.toBase58()).toBe(STONK_STANDARD_PLATFORM);
+    expect(tx.instructions[2].keys.at(-1)?.pubkey.toBase58()).toBe(ruleAddress.toBase58());
     expect(prepared.raw).toMatchObject({ baseTokenProgram: TOKEN_2022_PROGRAM, transferFeeEnabled: false, mintSignerRequired: true });
     expect(prepared.payment.lamports).toBe("8696800");
     expect(mocks.insert).toHaveBeenCalledOnce(); expect(mocks.broadcast).not.toHaveBeenCalled();

@@ -20,6 +20,19 @@ export function automaticPayoutsConfigured(env: NodeJS.ProcessEnv = process.env)
   return env.PAYOUT_MODE === "server_signer" && env.DRY_RUN === "false";
 }
 
+export function automaticPayoutReadiness(env: NodeJS.ProcessEnv = process.env) {
+  if (!automaticPayoutsConfigured(env)) return { ready: false, error: "Automatic payouts are not enabled" };
+  try {
+    const treasury = env.TOPBLAST_TREASURY_ADDRESS;
+    if (!treasury) throw new Error("TOPBLAST_TREASURY_ADDRESS is missing");
+    if (createRailwaySigner(env as Record<string, string | undefined>).publicKey() !== treasury) throw new Error("Treasury signer does not match the configured treasury");
+    payoutLimit(env);
+    return { ready: true, error: null };
+  } catch (error) {
+    return { ready: false, error: error instanceof Error ? error.message : "Treasury signer is unavailable" };
+  }
+}
+
 export async function processAutomaticPayout(db: SupabaseClient, owner: string, env: NodeJS.ProcessEnv = process.env): Promise<AutomaticPayoutResult> {
   if (!automaticPayoutsConfigured(env)) return { status: "disabled" };
   const treasury = env.TOPBLAST_TREASURY_ADDRESS;

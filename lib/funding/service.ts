@@ -22,7 +22,7 @@ export async function prepareLaunchFunding(launchId: string, funderWallet: strin
   if (process.env.DRY_RUN !== "false") throw new Error("Funding is locked while DRY_RUN is enabled. No wallet signature or deposit is required yet.");
   const db = getAdminDb();
   const { data: launch, error } = await db.from("launches")
-    .select("id,status,venue,creator_wallet,quote_mint,launch_configs(*)")
+    .select("id,status,venue,creator_wallet,quote_mint,quote_symbol,launch_configs(*)")
     .eq("id", launchId).single();
   if (error) throw error;
   if (!launch || !["active", "paused"].includes(launch.status)) throw new Error("Launch is not available for funding");
@@ -68,7 +68,7 @@ export async function prepareLaunchFunding(launchId: string, funderWallet: strin
     grossAmountAtoms: gross.toString(), rewardAmountAtoms: split.topblast.toString(),
     creatorAmountAtoms: split.creator.toString(), protocolAmountAtoms: split.protocol.toString(),
     rewardTreasury: config.treasury_address, protocolTreasury: protocolTreasury ?? null, memo,
-    rewardSymbol: launch.venue === "pumpfun" ? "WSOL" : "STONK", wrapsNativeSol: launch.venue === "pumpfun",
+    rewardSymbol: launch.venue === "pumpfun" ? "WSOL" : launch.quote_symbol, wrapsNativeSol: launch.venue === "pumpfun",
   };
 }
 

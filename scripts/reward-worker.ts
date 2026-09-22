@@ -7,7 +7,9 @@ import { registerLaunchTracker } from "../lib/db/launch-repository";
 import { planEpoch, reconcileMarket, reconcilePayoutBatches } from "../lib/worker/pipeline";
 import { launchVenue } from "../lib/venue/registry";
 import { submitBoundLaunch } from "../lib/venue/launch-submission-service";
-import { automaticPayoutsConfigured, processAutomaticPayout } from "../lib/payout/automatic";
+import { automaticPayoutReadiness, automaticPayoutsConfigured, processAutomaticPayout } from "../lib/payout/automatic";
+import { reconcileStonkForwardedFees } from "../lib/funding/stonk-auto";
+import { processCreatorFeeDistribution } from "../lib/funding/creator-distribution";
 
 const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -41,9 +43,10 @@ async function runCycle() {
   lastCycleAt = new Date().toISOString();
   lastCycleError = null;
   needsBackfill = false;
+  const signer = automaticPayoutReadiness();
   const { error: heartbeatError } = await db.from("system_config").upsert({
     key: "worker_heartbeat",
-    value: { at: lastCycleAt, owner, mode: dryRun ? "dry_run" : "live", payoutMode: automaticPayoutsConfigured() ? "server_signer" : "wallet_approved", pipeline: "operational" },
+    value: { at: lastCycleAt, owner, mode: dryRun ? "dry_run" : "live", payoutMode: automaticPayoutsConfigured() ? "server_signer" : "wallet_approved", signerReady: signer.ready, signerError: signer.error, pipeline: "operational" },
     updated_at: lastCycleAt,
   });
   if (heartbeatError) throw heartbeatError;
@@ -77,6 +80,14 @@ async function runCycle() {
       const venueMarket = await launchVenue(market.venue).getMarketData(market.base_mint, market.market_address);
       await db.from("launches").update({ price_usd: venueMarket.priceUsd, market_cap_usd: venueMarket.marketCapUsd, volume_24h_usd: venueMarket.volume24hUsd, liquidity_usd: venueMarket.liquidityUsd, updated_at: new Date().toISOString() }).eq("id", market.launch_id);
     } catch (error) { process.stderr.write(`${market.launch_id}: optional venue metrics unavailable: ${error instanceof Error ? error.message : "unknown error"}\n`); }
+    if (market.venue === "stonkfun") {
+      try {
+        const result = await reconcileStonkForwardedFees(db, market);
+        if (result.credited) process.stdout.write(`${market.launch_id}: credited ${result.credited} finalized Stonk creator-fee receipt(s)\n`);
+      } catch (error) {
+        process.stderr.write(`${market.launch_id}: Stonk creator-fee reconciliation failed: ${error instanceof Error ? error.message : "unknown error"}\n`);
+      }
+    }
   }
 
   const { data: funding } = await db.from("funding_intents").select("id").in("status", ["submitted", "uncertain"]);
@@ -103,7 +114,9 @@ async function runCycle() {
     }
   }
   try {
-    const payout = await processAutomaticPayout(db, owner);
+    const creatorDistribution = await processCreatorFeeDistribution(db, owner);
+    if (creatorDistribution.status !== "disabled" && creatorDistribution.status !== "idle") process.stdout.write(`${new Date().toISOString()} creator distribution ${JSON.stringify(creatorDistribution)}\n`);
+    const payout = ["idle", "confirmed", "disabled"].includes(creatorDistribution.status) ? await processAutomaticPayout(db, owner) : { status: "lease_busy" as const };
     if (payout.status !== "disabled" && payout.status !== "idle") process.stdout.write(`${new Date().toISOString()} payout ${JSON.stringify(payout)}\n`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "automatic payout failed";

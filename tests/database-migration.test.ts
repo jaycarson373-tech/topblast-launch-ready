@@ -16,6 +16,7 @@ describe("Supabase migrations", () => {
     await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609210001_test_launches.sql"), "utf8"));
     await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609220001_public_listing_controls.sql"), "utf8"));
     await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609220001_public_listing_controls.sql"), "utf8"));
+    await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609220003_automatic_creator_fees.sql"), "utf8"));
     await db.exec("set role service_role");
     await db.query("insert into public.launch_metadata(id,metadata,image_data) values('00000000-0000-4000-8000-000000000099','{}','test-image')");
     await expect(db.query("update public.launch_metadata set image_data='overwritten'")).rejects.toThrow();
@@ -31,6 +32,8 @@ describe("Supabase migrations", () => {
       await db.query("insert into public.launch_configs(launch_id,fee_tier,topblast_percent,creator_percent,protocol_percent,reward_asset_mint,treasury_address) values($1,'1%',70,20,10,'stonk','treasury')", [id]);
       await db.query("insert into public.funding_intents(id,launch_id,funder_wallet,asset_mint,gross_amount_atoms,reward_amount_atoms,creator_amount_atoms,protocol_amount_atoms,reward_treasury,protocol_treasury,memo,unsigned_transaction,unsigned_message_hash,last_valid_block_height,status,signature,expires_at) values(gen_random_uuid(),$1,'creator','stonk',100,70,20,10,'treasury','protocol',$2,'wire','hash',99,'submitted',$3,now()+interval '1 minute')", [id, `memo-${id}`, `signature-${id}`]);
     }
+    await db.query("insert into public.fee_events(launch_id,asset_mint,amount_atoms,source,signature,status) values($1,'stonk',100,'stonkfun_forward','one-forward','confirmed')", [a]);
+    await expect(db.query("insert into public.fee_events(launch_id,asset_mint,amount_atoms,source,signature,status) values($1,'stonk',100,'stonkfun_forward','one-forward','confirmed')", [b])).rejects.toThrow();
     const intentA = await db.query<{ id: string }>("select id from public.funding_intents where launch_id=$1", [a]);
     await expect(db.query("update public.funding_intents set reward_treasury=funder_wallet where launch_id=$1", [a])).rejects.toThrow("funding_intents_no_self_funding");
     const intentB = await db.query<{ id: string }>("select id from public.funding_intents where launch_id=$1", [b]);

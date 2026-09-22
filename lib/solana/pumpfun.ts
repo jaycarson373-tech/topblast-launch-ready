@@ -35,7 +35,7 @@ export async function readPumpCurve(mint: string, expectedPool: string) {
 export async function inspectPumpMarket(input: { mint: string; pool: string; quoteMint: string; creator: string; launchSignature?: string | null }) {
   if (input.quoteMint !== PUMP_SOL_MINT) throw new Error("Pump.fun requires the SOL quote mint");
   const { curve } = await readPumpCurve(input.mint, input.pool);
-  if (curve.creator.toBase58() !== input.creator) throw new Error("Pump.fun creator identity mismatch");
+  if (![input.creator, process.env.TOPBLAST_TREASURY_ADDRESS].includes(curve.creator.toBase58())) throw new Error("Pump.fun creator identity mismatch");
   const mint = await solanaRpc<{ value: { owner: string; data: { parsed: { type: string; info: { decimals: number } } } } | null }>("getAccountInfo", [input.mint, { encoding: "jsonParsed", commitment: "finalized" }]);
   if (mint.value?.owner !== TOKEN_2022_PROGRAM_ID.toBase58() || mint.value.data?.parsed?.type !== "mint" || mint.value.data.parsed.info.decimals !== 6) throw new Error("Unexpected Pump.fun mint program or decimals");
   if (!input.launchSignature) throw new Error("Finalized creation signature is required");
@@ -44,7 +44,7 @@ export async function inspectPumpMarket(input: { mint: string; pool: string; quo
   return {
     programId: PUMP_PROGRAM_ID.toBase58(), launchSlot: tx.slot, baseDecimals: 6, quoteDecimals: 9,
     baseTokenProgram: TOKEN_2022_PROGRAM_ID.toBase58(), quoteTokenProgram: TOKEN_PROGRAM_ID.toBase58(),
-    authorityAddress: input.pool, creatorAddress: input.creator, configAddress: GLOBAL_PDA.toBase58(), platformConfigAddress: GLOBAL_PDA.toBase58(),
+    authorityAddress: input.pool, creatorAddress: curve.creator.toBase58(), configAddress: GLOBAL_PDA.toBase58(), platformConfigAddress: GLOBAL_PDA.toBase58(),
     baseVault: getAssociatedTokenAddressSync(new PublicKey(input.mint), new PublicKey(input.pool), true, TOKEN_2022_PROGRAM_ID).toBase58(),
     quoteVault: input.pool,
   };

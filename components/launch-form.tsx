@@ -11,6 +11,9 @@ import { validateTokenImage } from "@/lib/token-image";
 import { clientJson } from "@/lib/client-json";
 
 const STONK_MINT = process.env.NEXT_PUBLIC_STONK_QUOTE_MINT ?? "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx";
+const SOL_MINT = "So11111111111111111111111111111111111111112";
+interface VenuePair { mint: string; symbol: string; name: string; decimals: number; launchable: boolean; launchLabReady?: boolean }
+const STONK_PAIR: VenuePair = { mint: STONK_MINT, symbol: "STONK", name: "STONK", decimals: 9, launchable: true, launchLabReady: true };
 
 interface WalletAccountLike { address: string; chains: readonly string[] }
 interface WalletLike {
@@ -76,8 +79,12 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
   const [error, setError] = useState("");
   const [result, setResult] = useState<Record<string, string> | null>(null);
   const [runtime, setRuntime] = useState<{ ready: boolean; missing: string[]; stonkBlockers?: string[]; pumpReady: boolean; pumpBlockers: string[] } | null>(null);
+  const [stonkPairs, setStonkPairs] = useState<VenuePair[]>([STONK_PAIR]);
+  const [stonkPairMint, setStonkPairMint] = useState(STONK_MINT);
+  const [pairError, setPairError] = useState("");
   const venueReady = Boolean(venue === "stonkfun" ? runtime?.ready : runtime?.pumpReady);
   const total = useMemo(() => allocation.topblastPercent + allocation.creatorPercent + allocation.protocolPercent, [allocation]);
+  const stonkPair = stonkPairs.find((pair) => pair.mint === stonkPairMint) ?? STONK_PAIR;
 
   useEffect(() => {
     try {
@@ -90,15 +97,19 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
       .catch((caught) => { if (testMode) setError(caught instanceof Error ? caught.message : "Test availability check failed"); setRuntime({ ready: false, missing: ["runtime health check"], stonkBlockers: ["Test or infrastructure checks unavailable"], pumpReady: false, pumpBlockers: ["Runtime health check unavailable"] }); });
   }, [receiptKey, testMode]);
 
-  async function checkTestAccess() {
-    setBusy(true); setError(""); setRuntime(null);
-    try {
-      const { response, body } = await clientJson("/api/launch/test-readiness", { cache: "no-store" }, 25_000, "Test availability check timed out");
-      if (!response.ok) throw new Error(body.error ?? "Test availability check failed");
-      setRuntime(body);
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "Test readiness unavailable"); setRuntime({ ready: false, pumpReady: false, missing: [], stonkBlockers: ["Availability check failed. Retry above."], pumpBlockers: ["Availability check failed. Retry above."] }); }
-    finally { setBusy(false); }
-  }
+  useEffect(() => {
+    clientJson("/api/venues/stonkfun/pairs", { cache: "no-store" }, 20_000, "StonkFun pair list timed out")
+      .then(({ response, body }) => {
+        if (!response.ok || !Array.isArray(body.pairs)) throw new Error(body.error ?? "StonkFun pair list is unavailable");
+        const pairs = (body.pairs as VenuePair[]).filter((pair) => pair.launchable && pair.launchLabReady !== false)
+          .sort((a, b) => (a.symbol === "STONK" ? -1 : b.symbol === "STONK" ? 1 : a.symbol.localeCompare(b.symbol)));
+        if (!pairs.length) throw new Error("StonkFun returned no launchable pairs");
+        setStonkPairs(pairs);
+        setStonkPairMint((current) => pairs.some((pair) => pair.mint === current) ? current : pairs[0].mint);
+        setPairError("");
+      })
+      .catch((caught) => setPairError(caught instanceof Error ? caught.message : "StonkFun pair list is unavailable"));
+  }, []);
 
   function requestHeaders(): Record<string, string> {
     return { "Content-Type": "application/json" };
@@ -154,14 +165,15 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
     return () => window.clearInterval(timer);
   }, [prepared, receipt]);
 
-  async function connect() {
+  async function connect(requestedWallet?: string) {
     setError("");
-    const candidate = wallets.find((item) => item.name === selectedWallet && item.features["standard:connect"] && item.features["solana:signTransaction"]);
+    const choice = requestedWallet || selectedWallet || wallets[0]?.name;
+    const candidate = wallets.find((item) => item.name === choice && item.features["standard:connect"] && item.features["solana:signTransaction"]);
     if (!candidate) throw new Error("Install a Wallet Standard Solana wallet to continue");
     const response = await (candidate.features["standard:connect"] as ConnectFeature).connect();
     const account = response.accounts.find((item) => item.chains.includes("solana:mainnet"));
     if (!account) throw new Error("This launch requires a wallet account that supports Solana mainnet");
-    setWallet(account); setWalletName(candidate.name); setWalletObject(candidate);
+    setSelectedWallet(candidate.name); setWallet(account); setWalletName(candidate.name); setWalletObject(candidate);
   }
 
   async function prepare(form: FormData) {
@@ -178,7 +190,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
         launchMint: venue === "stonkfun" ? mintSigner.current.publicKey.toBase58() : undefined,
         creatorWallet: connected.address,
         name: form.get("name"), symbol: form.get("symbol"), description: form.get("description"), logo,
-        quoteMint: venue === "pumpfun" ? "So11111111111111111111111111111111111111112" : STONK_MINT, quoteSymbol: venue === "pumpfun" ? "SOL" : "STONK", feeTier: form.get("feeTier") ?? "1%", allocation,
+        quoteMint: venue === "pumpfun" ? SOL_MINT : stonkPair.mint, quoteSymbol: venue === "pumpfun" ? "SOL" : stonkPair.symbol, feeTier: form.get("feeTier") ?? "1%", allocation,
         website: form.get("website"), twitter: form.get("twitter"), telegram: form.get("telegram"),
       };
       const { response, body } = await clientJson("/api/launch/prepare", { method: "POST", headers: requestHeaders(), body: JSON.stringify(payload) }, 70_000, "Preparation timed out. No wallet signature was requested. Your details are still here; try preparing again.");
@@ -260,7 +272,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
     finally { setBusy(false); }
   }
 
-  const walletPicker = !wallet && <div className="wallet-picker"><select aria-label="Wallet" disabled={busy} value={selectedWallet} onChange={(event) => setSelectedWallet(event.target.value)}>{wallets.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select><button className="button button-secondary" type="button" disabled={busy} onClick={() => void connect().catch((caught) => setError(caught instanceof Error ? caught.message : "Wallet connection failed"))}>Connect wallet</button></div>;
+  const walletPicker = !wallet && <div className="wallet-picker" aria-label="Choose a wallet">{wallets.length ? wallets.map((item) => <button key={item.name} className="wallet-choice" type="button" disabled={busy} onClick={() => void connect(item.name).catch((caught) => setError(caught instanceof Error ? caught.message : "Wallet connection failed"))}>Connect {item.name}</button>) : <span className="notice">Install a Solana wallet to continue.</span>}</div>;
 
   return (
     <form className={`panel launch-form venue-theme-${venue}`} onSubmit={(event) => { event.preventDefault(); void prepare(new FormData(event.currentTarget)); }}>
@@ -273,12 +285,12 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
         <details><summary>View saved receipt</summary><p className="mono">Launch: {receipt.launchId}<br />Transaction: <a href={`https://solscan.io/tx/${encodeURIComponent(receipt.paymentSignature)}`} target="_blank" rel="noreferrer">{receipt.paymentSignature}</a></p></details>
       </section>}
       {error && <div className="error" role="alert">{error}</div>}
-      {testMode && <section className="form-section"><div className="section-label">Connect your creator wallet</div><p className="notice">1. Connect wallet. 2. Choose your venue and token details. 3. Review the cost and approve in your wallet.</p><p className="notice">Real mainnet costs. {publicTestListing ? "Publicly listed as a pre-launch verification token." : "Hidden on TopBlast."} Onchain and venue activity is public. No token is created until you approve the reviewed transaction. Reward payouts remain separately gated.</p>{walletPicker}{wallet && <p className="notice">Connected: <span className="mono">{wallet.address}</span></p>}<p className="notice" role="status">{!runtime ? "Checking venue availability..." : venueReady ? "Infrastructure ready. An approved creator wallet is still required." : "Venue unavailable. Check the message below or retry."}</p><button type="button" className="button button-secondary" disabled={busy || Boolean(prepared)} onClick={() => void checkTestAccess()}>Refresh venue availability</button></section>}
+      {testMode && <section className="form-section"><div className="section-label">Connect your creator wallet</div><p className="notice">1. Connect wallet. 2. Choose your venue and token details. 3. Review the cost and approve in your wallet.</p><p className="notice">Real mainnet costs. {publicTestListing ? "Publicly listed as a pre-launch verification token." : "Hidden on TopBlast."} Onchain and venue activity is public. No token is created until you approve the reviewed transaction.</p>{walletPicker}{wallet && <p className="notice">Connected: <span className="mono">{wallet.address}</span></p>}<p className="notice" role="status">{!runtime ? "Checking venue availability..." : venueReady ? "Venue ready." : "Venue unavailable. The transaction button remains locked."}</p></section>}
       {runtime && !venueReady && <div className="error"><strong>{venue === "pumpfun" ? "Pump.fun unavailable." : "StonkFun unavailable."}</strong> The transaction button stays locked until infrastructure checks pass. No payment can be submitted here.<ul>{(venue === "pumpfun" ? runtime.pumpBlockers : runtime.stonkBlockers ?? []).map((blocker) => <li key={blocker}>{blocker}</li>)}</ul></div>}
       <fieldset disabled={busy || Boolean(prepared) || Boolean(receipt)}>
-      <div className="launch-venue-hint"><VenueBadge venue={venue} /><span>{venue === "pumpfun" ? "SOL pair · WSOL rewards" : "STONK pair · STONK rewards"}</span></div>
+      <div className="launch-venue-hint"><VenueBadge venue={venue} /><span>{venue === "pumpfun" ? "SOL pair · WSOL rewards" : `${stonkPair.symbol} pair · ${stonkPair.symbol} rewards`}</span></div>
       <div className="form-grid">
-        <div className="field full"><label htmlFor="venue">Launch venue</label><select id="venue" value={venue} onChange={(event) => setVenue(event.target.value as typeof venue)}><option value="stonkfun">StonkFun · STONK pair</option><option value="pumpfun">Pump.fun · SOL pair</option></select>{venue === "pumpfun" && <p className="notice">Regular Pump.fun token with TopBlast deposit-funded rewards paid in WSOL. Pump.fun native holder rewards are separate and are not enabled. Tracking pauses at graduation until the new market is verified.</p>}</div>
+        <div className="field full"><label htmlFor="venue">Launch venue</label><select id="venue" value={venue} onChange={(event) => setVenue(event.target.value as typeof venue)}><option value="stonkfun">StonkFun · choose any live pair</option><option value="pumpfun">Pump.fun · SOL pair</option></select>{venue === "pumpfun" && <p className="notice">Regular Pump.fun token with TopBlast rewards paid in WSOL. Pump.fun currently creates SOL-paired tokens only. Tracking pauses at graduation until the new market is verified.</p>}</div>
         <div className="field"><label htmlFor="name">Token name</label><input id="name" name="name" required maxLength={32} placeholder="Top Coin" /></div>
         <div className="field"><label htmlFor="symbol">Ticker</label><input id="symbol" name="symbol" required maxLength={10} placeholder="TOP" /></div>
         <div className="field full"><label htmlFor="description">Description</label><textarea id="description" name="description" maxLength={500} placeholder="What this token is for." /></div>
@@ -290,13 +302,12 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
       </div>
       <div className="form-section">
         <div className="section-label">Pair</div>
-        <h3>{venue === "pumpfun" ? "SOL" : "STONK"}</h3>
-        <p className="notice mono">{venue === "pumpfun" ? "So11111111111111111111111111111111111111112" : STONK_MINT}</p>
+        {venue === "stonkfun" ? <><label className="sr-only" htmlFor="stonk-pair">StonkFun quote pair</label><select id="stonk-pair" className="pair-select" value={stonkPairMint} onChange={(event) => setStonkPairMint(event.target.value)}>{stonkPairs.map((pair) => <option key={pair.mint} value={pair.mint}>{pair.symbol} · {pair.name}</option>)}</select><p className="notice">{stonkPairs.length} live StonkFun pairs available. Reward payouts use the selected quote asset.</p>{pairError && <p className="error">{pairError}. STONK remains available while the catalog reconnects.</p>}<p className="notice mono">{stonkPair.mint}</p></> : <><h3>SOL</h3><p className="notice mono">{SOL_MINT}</p></>}
       </div>
       <div className="form-section">
         <div className="section-label">TopBlast rewards</div>
         <h3>Fund the blast zone.</h3>
-        <p className="notice">When eligible holders fall below their verified average entry, they share the funded TopBlast reward pool. Venue fees first reach or are claimed by the creator under the venue’s rules. The creator then deposits a declared gross amount through the dashboard, and the fixed allocation is enforced by that transaction.</p>
+        <p className="notice">When eligible holders fall below their verified average entry, they share the funded TopBlast reward pool. Stonk launches route creator fees to the TopBlast treasury, where the worker verifies the exact pool receipt and enforces this launch’s fixed allocation automatically. Pump remains beta until its creator-wide vault can be attributed safely per launch.</p>
         <p className="notice"><strong>Split 100% of your share.</strong> These controls divide your {CREATOR_REWARD_PERCENT}% share, not the gross funding amount.</p>
         <div className="allocation-grid allocation-grid-two">
           {(["topblastPercent", "creatorPercent"] as const).map((key) => (
@@ -319,8 +330,8 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
           <Image src={prepared.logo} alt="Token image included in this launch" width={96} height={96} className="review-token-image" unoptimized />
           <p className="notice">Venue: {prepared.review.venue === "pumpfun" ? "Pump.fun" : "StonkFun"}. Pair: {prepared.review.symbol} / {prepared.review.quoteSymbol}. Your share: {prepared.review.creatorShare.topblastPercent}% rewards / {prepared.review.creatorShare.creatorPercent}% creator.</p>
           <p className="notice">Overall funding allocation: {prepared.review.allocation.topblastPercent}% rewards, {prepared.review.allocation.creatorPercent}% creator retained, {prepared.review.allocation.protocolPercent}% protocol. Your two controls divide the remaining {CREATOR_REWARD_PERCENT}%, not 100% of gross funding.</p>
-          <p className="notice">Reward asset: {prepared.review.venue === "pumpfun" ? "WSOL" : "STONK"}. Reward treasury: <span className="mono">{prepared.rewardTreasury ?? "Unavailable. Do not approve until verified."}</span>. Protocol treasury: <span className="mono">{prepared.protocolTreasury ?? "Unavailable. Do not approve until verified."}</span>.</p>
-          <p className="notice"><strong>Permanent configuration:</strong> allocation and token metadata are fixed at launch. Venue fees do not automatically become rewards. Explicit funding and direct holder payout are separate steps. {prepared.review.venue === "pumpfun" && "Pump is beta. No initial buy, native cashback, mayhem, non-SOL pair, or PumpSwap graduation support. Tracking and new epochs pause at unsupported graduation."}</p>
+          <p className="notice">Reward asset: {prepared.review.venue === "pumpfun" ? "WSOL" : prepared.review.quoteSymbol}. Reward treasury: <span className="mono">{prepared.rewardTreasury ?? "Unavailable. Do not approve until verified."}</span>. Protocol treasury: <span className="mono">{prepared.protocolTreasury ?? "Unavailable. Do not approve until verified."}</span>.</p>
+          <p className="notice"><strong>Permanent configuration:</strong> allocation and token metadata are fixed at launch. {prepared.review.venue === "stonkfun" ? "The onchain creator-fee recipient is the TopBlast treasury. Only finalized fee forwards matching this exact pool can fund its rewards; the worker sends the creator share and eligible-holder airdrops." : "Pump is beta. Creator fees use a creator-wide vault and are not credited until safely attributed per launch. No initial buy, native cashback, mayhem, non-SOL pair, or PumpSwap graduation support."}</p>
           {prepared.review.venue === "pumpfun" && <p className="notice">Shown SOL cost is the simulated debit for network fees and account creation. No initial buy. Creator fees follow Pump.fun’s schedule. TopBlast rewards require a separate creator deposit.</p>}
           {prepared.raw?.creationMethod === "stonk_launchlab" && <p className="notice">StonkFun standard launch through its published LaunchLab configuration. Shown SOL cost covers simulated network fees and account rent, not an initial buy or reward funding. Stonk’s token listing may take time to appear.</p>}
           {prepared.raw?.venueFees && <p className="notice">Venue trading fees: {((Number(prepared.raw.venueFees.protocolRate) + Number(prepared.raw.venueFees.platformRate) + Number(prepared.raw.venueFees.creatorRate)) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% total, including {(Number(prepared.raw.venueFees.creatorRate) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% creator fee. These are separate from the TopBlast deposit allocation.</p>}

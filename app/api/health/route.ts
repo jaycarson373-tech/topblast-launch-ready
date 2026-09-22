@@ -17,6 +17,8 @@ export async function GET() {
   let treasuryRpcReachable = false;
   let treasurySol: number | null = null;
   let workerFresh = false;
+  let signerReady = false;
+  let signerError: string | null = null;
   let enginePaused = true;
   let acceptedCycle = false;
   let pumpSchemaReady = false;
@@ -24,8 +26,10 @@ export async function GET() {
   if (readiness.database) {
     const { data, error } = await getAdminDb().from("system_config").select("key,value").in("key", ["worker_heartbeat", "reward_engine_paused", "production_acceptance"]);
     databaseReachable = !error;
-    const heartbeat = data?.find((row) => row.key === "worker_heartbeat")?.value as { at?: string; pipeline?: string } | undefined;
+    const heartbeat = data?.find((row) => row.key === "worker_heartbeat")?.value as { at?: string; pipeline?: string; signerReady?: boolean; signerError?: string | null } | undefined;
     workerFresh = Boolean(heartbeat?.at && heartbeat.pipeline === "operational" && Date.now() - new Date(heartbeat.at).getTime() < 180_000);
+    signerReady = heartbeat?.signerReady === true;
+    signerError = typeof heartbeat?.signerError === "string" ? heartbeat.signerError : null;
     enginePaused = data?.find((row) => row.key === "reward_engine_paused")?.value !== false;
     const { count } = await getAdminDb().from("transaction_proofs").select("id", { count: "exact", head: true }).eq("kind", "distribution").not("signature", "is", null);
     // A lone distribution is not evidence of a complete launch-to-restart cycle.
@@ -59,8 +63,8 @@ export async function GET() {
   const pumpEnabled = process.env.PUMPFUN_ENABLED === "true";
   const pumpLaunchReady = readiness.launchReady && databaseReachable && pumpSchemaReady && pumpPairReady && pumpEnabled && treasuryRpcReachable;
   const ready = stonkLaunchReady || pumpLaunchReady;
-  const rewardsReady = ready && workerFresh && !enginePaused && !readiness.dryRun && acceptedCycle;
-  const rewardBlockers = [!workerFresh && "Operational worker heartbeat", enginePaused && "Reward engine is paused", readiness.dryRun && "DRY_RUN is enabled", !acceptedCycle && "No accepted end-to-end payout proof yet"].filter(Boolean);
+  const rewardsReady = ready && workerFresh && signerReady && !enginePaused && !readiness.dryRun && acceptedCycle;
+  const rewardBlockers = [!workerFresh && "Operational worker heartbeat", !signerReady && (signerError || "Railway treasury signer is not ready"), enginePaused && "Reward engine is paused", readiness.dryRun && "DRY_RUN is enabled", !acceptedCycle && "No accepted end-to-end payout proof yet"].filter(Boolean);
   return NextResponse.json({
     status: ready ? "ready" : "configuration_required",
     ready,
@@ -69,12 +73,12 @@ export async function GET() {
     fundingReady: databaseReachable && !readiness.dryRun,
     venues: {
       stonkfun: { launchReady: stonkLaunchReady, pairReady: stonkPairReady, creationReady: stonkCreationReady,
-        creationMethod: "stonk_launchlab", rewardAsset: "STONK", fundingMode: "creator_deposit",
+        creationMethod: "stonk_launchlab", rewardAsset: "selected_quote", fundingMode: "verified_creator_fee_forward",
         blockers: [...readiness.missing, !readiness.launchesEnabled && "LAUNCHES_ENABLED is false", !databaseReachable && "Database unavailable",
           !pumpSchemaReady && "Launch metadata migration required", !stonkPairReady && "STONK pair unavailable", !stonkCreationReady && stonkCreationError, !treasuryRpcReachable && "Treasury RPC check incomplete"].filter(Boolean) },
       pumpfun: {
         launchReady: pumpLaunchReady, pairReady: pumpPairReady, schemaReady: pumpSchemaReady,
-        enabled: pumpEnabled, rewardAsset: "WSOL", fundingMode: "creator_deposit", graduationSupported: false,
+        enabled: pumpEnabled, rewardAsset: "WSOL", fundingMode: "creator_vault_beta", graduationSupported: false,
         blockers: [
           ...readiness.missing,
           !readiness.launchesEnabled && "LAUNCHES_ENABLED is false",
@@ -106,6 +110,8 @@ export async function GET() {
       launchesEnabled: readiness.launchesEnabled,
       dryRun: readiness.dryRun,
       workerFresh,
+      signerReady,
+      signerError,
       enginePaused,
       acceptedCycle,
     },

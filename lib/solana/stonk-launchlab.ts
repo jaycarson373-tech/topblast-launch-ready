@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import BN from "bn.js";
 import { z } from "zod";
 import { ComputeBudgetProgram, PublicKey, Transaction } from "@solana/web3.js";
+import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { getAdminDb } from "@/lib/db/server";
 import { solanaRpc } from "@/lib/solana/rpc";
 import { launchReviewExpiry } from "@/lib/solana/launch-expiry";
@@ -94,8 +95,12 @@ export async function simulateStonkLaunch(input: LaunchDraft, verified: Awaited<
   if (!input.launchMint) throw new Error("Refresh the page to prepare a Stonk launch with a browser-generated mint");
   validatePumpImage(input.logo);
   const { pricing, platformInfo, configInfo, token2022 } = verified;
-  const creator = new PublicKey(input.creatorWallet), mint = new PublicKey(input.launchMint), quote = new PublicKey(input.quoteMint);
-  if (!PublicKey.isOnCurve(creator.toBytes()) || !PublicKey.isOnCurve(mint.toBytes()) || creator.equals(mint) || quote.equals(mint)) throw new Error("Invalid creator or new mint signer");
+  const payer = new PublicKey(input.creatorWallet), mint = new PublicKey(input.launchMint), quote = new PublicKey(input.quoteMint);
+  // The API readiness gate requires the treasury in production. Falling back to
+  // the payer keeps the low-level adapter independently testable.
+  const feeRecipientValue = process.env.TOPBLAST_TREASURY_ADDRESS ?? input.creatorWallet;
+  const feeRecipient = new PublicKey(feeRecipientValue);
+  if (!PublicKey.isOnCurve(payer.toBytes()) || !PublicKey.isOnCurve(feeRecipient.toBytes()) || !PublicKey.isOnCurve(mint.toBytes()) || payer.equals(mint) || feeRecipient.equals(mint) || quote.equals(mint)) throw new Error("Invalid payer, fee recipient, or new mint signer");
   const exists = await solanaRpc<{ value: unknown }>("getAccountInfo", [input.launchMint, { commitment: "finalized", encoding: "base64" }]);
   if (exists.value !== null) throw new Error("Mint already exists. Prepare a new launch.");
   const metadataId = randomUUID();
@@ -107,11 +112,11 @@ export async function simulateStonkLaunch(input: LaunchDraft, verified: Awaited<
   // No buy, swap, arbitrary fee recipient, or transfer-tax extension is added.
   const curve = { type: "ConstantCurve" as const, migrateType: "cpmm" as const, supply: new BN(pricing.curve.supply), totalSellA: new BN(pricing.curve.totalSellA), totalFundRaisingB: new BN(pricing.raise.raw) };
   const allowConfig = platformInfo.restrictGlobalConfig === 1 ? getPdaPlatformAllowConfig(program, platform, config).publicKey : undefined;
-  const create = token2022 ? initializeWithToken2022(program, creator, creator, config, platform, getPdaLaunchpadAuth(program).publicKey,
+  const create = token2022 ? initializeWithToken2022(program, payer, feeRecipient, config, platform, getPdaLaunchpadAuth(program).publicKey,
     pool, mint, quote, getPdaLaunchpadVaultId(program, pool, mint).publicKey, getPdaLaunchpadVaultId(program, pool, quote).publicKey,
     new PublicKey(pricing.quote.tokenProgram), pricing.curve.baseDecimals, input.name, input.symbol, uri, curve,
     new BN(0), new BN(0), new BN(0), pricing.curve.cpmmCreatorFeeOn, undefined, allowConfig, new PublicKey(pricing.curveRule.standard))
-    : initializeV2(program, creator, creator, config, platform, getPdaLaunchpadAuth(program).publicKey,
+    : initializeV2(program, payer, feeRecipient, config, platform, getPdaLaunchpadAuth(program).publicKey,
     pool, mint, quote, getPdaLaunchpadVaultId(program, pool, mint).publicKey, getPdaLaunchpadVaultId(program, pool, quote).publicKey,
     getPdaMetadataKey(mint).publicKey, new PublicKey(pricing.quote.tokenProgram), pricing.curve.baseDecimals, input.name, input.symbol, uri,
     curve,
@@ -123,8 +128,11 @@ export async function simulateStonkLaunch(input: LaunchDraft, verified: Awaited<
   const latest = await solanaRpc<{ context: { slot: number }; value: { blockhash: string; lastValidBlockHeight: number } }>("getLatestBlockhash", [{ commitment: "confirmed" }]);
   if (!Number.isSafeInteger(latest.context?.slot)) throw new Error("Launch blockhash context unavailable");
   if (!Number.isSafeInteger(latest.value.lastValidBlockHeight)) throw new Error("Launch blockhash validity unavailable");
-  const transaction = new Transaction({ feePayer: creator, recentBlockhash: latest.value.blockhash })
-    .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }), create);
+  const feeRecipientQuoteAccount = getAssociatedTokenAddressSync(quote, feeRecipient, false, TOKEN_PROGRAM_ID);
+  const transaction = new Transaction({ feePayer: payer, recentBlockhash: latest.value.blockhash })
+    .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }))
+    .add(createAssociatedTokenAccountIdempotentInstruction(payer, feeRecipientQuoteAccount, feeRecipient, quote, TOKEN_PROGRAM_ID))
+    .add(create);
   const wire = transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64");
   const before = await solanaRpc<{ context: { slot: number }; value: number }>("getBalance", [input.creatorWallet, { commitment: "confirmed", minContextSlot: latest.context.slot }]);
   if (!Number.isSafeInteger(before.value) || !Number.isSafeInteger(before.context?.slot)) throw new Error("Creator balance is unavailable");
@@ -139,11 +147,11 @@ export async function simulateStonkLaunch(input: LaunchDraft, verified: Awaited<
     metadata: { name: input.name, symbol: input.symbol, description: input.description, image: `${uri}?image=1`, external_url: input.website, twitter: input.twitter, telegram: input.telegram } };
   const lamports = String(before.value - after!);
   const prepared: PreparedLaunch = {
-    signedQuote: JSON.stringify({ venue: "stonkfun", method: "launchlab", mint: input.launchMint, pool: pool.toBase58(), metadataId, lastValidBlockHeight: latest.value.lastValidBlockHeight }),
+    signedQuote: JSON.stringify({ venue: "stonkfun", method: "launchlab", mint: input.launchMint, pool: pool.toBase58(), feeRecipient: feeRecipient.toBase58(), metadataId, lastValidBlockHeight: latest.value.lastValidBlockHeight }),
     paymentTransaction: wire, payment: { lamports, sol: Number(lamports) / 1e9, recipient: LAUNCHLAB_PROGRAM },
     expiresAt: await launchReviewExpiry(latest.value.lastValidBlockHeight),
     raw: { creationMethod: "stonk_launchlab", mintSignerRequired: true, simulation: "passed", simulationSlot: simulation.context.slot,
-      fundingMode: "creator_deposit", rewardAsset: "STONK", platform: pricing.platform.standard, pricing,
+      fundingMode: "automatic_creator_fee", rewardAsset: input.quoteSymbol, feeRecipient: feeRecipient.toBase58(), feeRecipientQuoteAccount: feeRecipientQuoteAccount.toBase58(), platform: pricing.platform.standard, pricing,
       baseTokenProgram: token2022 ? TOKEN_2022_PROGRAM : TOKEN_PROGRAM, transferFeeEnabled: false,
       venueFees: { denominator: "1000000", protocolRate: configInfo.tradeFeeRate.toString(), platformRate: platformInfo.feeRate.toString(), creatorRate: platformInfo.creatorFeeRate.toString() },
       costDescription: "Simulated SOL debit for network fees and account rent. No initial buy. Venue fees come from Stonk's onchain configuration, not the TopBlast allocation." },
@@ -163,13 +171,13 @@ export function isStonkDirectQuote(quote: string) {
 }
 
 export async function recoverStonkLaunch(signature: string, receipt: { signed_quote: string; signed_payment_transaction: string }): Promise<SubmittedLaunch> {
-  const quote = z.object({ venue: z.literal("stonkfun"), method: z.literal("launchlab"), mint: publicKey, pool: publicKey, lastValidBlockHeight: z.number().int().positive().safe() }).parse(JSON.parse(receipt.signed_quote));
+  const quote = z.object({ venue: z.literal("stonkfun"), method: z.literal("launchlab"), mint: publicKey, pool: publicKey, feeRecipient: publicKey.optional(), lastValidBlockHeight: z.number().int().positive().safe() }).parse(JSON.parse(receipt.signed_quote));
   if (await solanaRpc<string>("getGenesisHash") !== "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d") throw new Error("Stonk recovery requires Solana mainnet");
   const tx = await solanaRpc<{ slot: number; meta: { err: unknown } | null; transaction: [string, string] } | null>("getTransaction", [signature, { commitment: "finalized", encoding: "base64", maxSupportedTransactionVersion: 0 }]);
   if (tx) {
     if (!tx.meta || tx.meta.err === undefined || !Number.isSafeInteger(tx.slot)) throw new Error("Stonk finalized transaction metadata unavailable");
     if (tx.transaction?.[0] !== receipt.signed_payment_transaction) throw new Error("Stonk finalized transaction does not match the saved receipt");
-    return { status: tx.meta.err === null ? "completed" : "failed", paymentSignature: signature, mint: quote.mint, pool: quote.pool, signature, raw: { slot: tx.slot, error: tx.meta.err, creationMethod: "stonk_launchlab" } };
+    return { status: tx.meta.err === null ? "completed" : "failed", paymentSignature: signature, mint: quote.mint, pool: quote.pool, signature, raw: { slot: tx.slot, error: tx.meta.err, creationMethod: "stonk_launchlab", feeRecipient: quote.feeRecipient } };
   }
   const height = await solanaRpc<number>("getBlockHeight", [{ commitment: "finalized" }]);
   if (!Number.isSafeInteger(height)) throw new Error("Finalized block height unavailable");

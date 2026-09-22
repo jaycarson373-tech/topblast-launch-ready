@@ -23,17 +23,19 @@ export async function POST(request: Request) {
     const rateLimit = await checkPrepareBudget("launch_prepare");
     if (rateLimit) return rateLimit;
     validateMinimumReward(draft.allocation.topblastPercent);
+    if (!process.env.TOPBLAST_TREASURY_ADDRESS) throw new Error("TopBlast fee treasury is not configured");
     if (!draft.isTest && draft.venue === "pumpfun" && process.env.PUMPFUN_ENABLED !== "true") throw new Error("Pump.fun acceptance is pending. Creation is not enabled yet.");
     if (draft.creatorWallet === process.env.TOPBLAST_TREASURY_ADDRESS) throw new Error("Use a separate creator wallet so this launch can fund rewards");
-    const expectedQuote = draft.venue === "pumpfun" ? PUMP_SOL_MINT : process.env.STONK_QUOTE_MINT ?? "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx";
-    if (draft.quoteMint !== expectedQuote) return NextResponse.json({ error: "Unsupported quote mint for the selected venue" }, { status: 400 });
-    draft.quoteSymbol = draft.venue === "pumpfun" ? "SOL" : "STONK";
+    if (draft.venue === "pumpfun" && draft.quoteMint !== PUMP_SOL_MINT) return NextResponse.json({ error: "Pump.fun currently supports SOL pairs only" }, { status: 400 });
     await getTreasuryBalance(process.env.TOPBLAST_TREASURY_ADDRESS!);
     const adapter = launchVenue(draft.venue);
     const pair = await adapter.getPair(draft.quoteMint);
     if (!pair?.launchable || pair.launchLabReady === false) {
       return NextResponse.json({ error: "The selected pair is not currently launchable on this venue" }, { status: 503 });
     }
+    // Never trust a browser-supplied symbol. Bind the stored/reviewed symbol to
+    // the exact venue-verified quote mint selected for this launch.
+    draft.quoteSymbol = draft.venue === "pumpfun" ? "SOL" : pair.symbol;
     const prepared = await adapter.createLaunch(draft);
     if (!prepared.signedQuote || !prepared.paymentTransaction) throw new Error("The venue returned an incomplete launch quote");
     if (draft.isTest && draft.venue === "stonkfun") {

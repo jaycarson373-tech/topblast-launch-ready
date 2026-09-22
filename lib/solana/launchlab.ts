@@ -38,7 +38,8 @@ export async function inspectLaunchLabMarket(input: { pool: string; mint: string
   const response = await solanaRpc<AccountResponse>("getAccountInfo", [input.pool, { encoding: "base64", commitment: "finalized" }]);
   if (!Number.isSafeInteger(response.context?.slot)) throw new Error("LaunchLab pool context slot is missing");
   const pool = decodePool(response.value);
-  if (pool.baseMint !== input.mint || pool.quoteMint !== input.quoteMint || pool.creatorAddress !== input.creator) throw new Error("LaunchLab pool identity mismatch");
+  const platformCreator = process.env.TOPBLAST_TREASURY_ADDRESS;
+  if (pool.baseMint !== input.mint || pool.quoteMint !== input.quoteMint || ![input.creator, platformCreator].includes(pool.creatorAddress)) throw new Error("LaunchLab pool identity mismatch");
   const [baseMint, quoteMint, baseVault, quoteVault, config, platform] = await Promise.all([
     parsedAccount(pool.baseMint), parsedAccount(pool.quoteMint), parsedAccount(pool.baseVault), parsedAccount(pool.quoteVault),
     solanaRpc<ParsedAccount>("getAccountInfo", [pool.configAddress, { encoding: "base64", commitment: "finalized" }]),

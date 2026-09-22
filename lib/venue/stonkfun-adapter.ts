@@ -103,15 +103,18 @@ export class StonkFunAdapter implements LaunchVenueAdapter {
   }
 
   async getPair(mint: string): Promise<VenuePair | null> {
+    const pairs = await this.listPairs();
+    return pairs.find((pair) => pair.mint === mint) ?? null;
+  }
+
+  async listPairs(): Promise<VenuePair[]> {
     const data = await this.call("/pairs?launchable=true&launchLabReady=true");
     const pairs = Array.isArray(data.pairs) ? data.pairs as Record<string, unknown>[] : [];
-    const item = pairs.find((pair) => pair.mint === mint);
-    if (!item) return null;
-    return {
+    return pairs.map((item) => ({
       mint: String(item.mint), symbol: String(item.symbol), name: String(item.name),
       decimals: Number(item.decimals ?? 0), launchable: item.launchable !== false,
       launchLabReady: item.launchLabReady === undefined ? undefined : Boolean(item.launchLabReady),
-    };
+    })).filter((item) => item.mint && item.symbol && Number.isInteger(item.decimals) && item.decimals >= 0 && item.decimals <= 18);
   }
 
   async getCreatorFees(mint: string): Promise<CreatorFees> {
