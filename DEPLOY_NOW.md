@@ -44,7 +44,7 @@ Use separate wallets:
 2. **TopBlast reward treasury**: public address stored as `TOPBLAST_TREASURY_ADDRESS`. It holds funded STONK rewards and a small amount of SOL for transaction fees.
 3. **Protocol treasury**: public address stored as `PROTOCOL_TREASURY_ADDRESS`.
 
-Do not paste a seed phrase, private key, or keypair JSON into Vercel, Railway, this repository, chat, or any `NEXT_PUBLIC_*` variable. The MVP uses `PAYOUT_MODE=manual_wallet`: Railway prepares and hashes the payout manifest, then an operator approves the exact transaction with a browser wallet.
+Never paste a seed phrase, private key, or keypair JSON into Vercel, Supabase, this repository, chat, or any `NEXT_PUBLIC_*` variable. Manual mode prepares and hashes the payout manifest for browser-wallet approval. Automatic mode uses the original TopBlast signer inside the isolated Railway worker only; configure that secret directly in Railway's protected variable UI.
 
 Do not put 10 SOL in the reward treasury just for transaction fees. Start with a small operational amount after verifying the address. Keep the actual reward budget in STONK. The creator wallet separately needs whatever amount the signed StonkFun quote displays.
 
@@ -66,6 +66,9 @@ Open **Vercel > topblast-stonkfun-launchpad > Settings > Environment Variables**
 NEXT_PUBLIC_APP_URL=https://topblast-stonkfun-launchpad.vercel.app
 TOPBLAST_TREASURY_ADDRESS=YOUR_REWARD_TREASURY_PUBLIC_ADDRESS
 PROTOCOL_TREASURY_ADDRESS=YOUR_PROTOCOL_TREASURY_PUBLIC_ADDRESS
+PAYOUT_MODE=server_signer
+TREASURY_PRIVATE_KEY=SET_DIRECTLY_IN_RAILWAY_DO_NOT_SHARE_OR_COMMIT
+TOPBLAST_MAX_PAYOUT_ATOMS=YOUR_MAXIMUM_SINGLE_BATCH_IN_RAW_REWARD_UNITS
 ```
 
 Redeploy after saving.
@@ -87,7 +90,7 @@ Service-specific variables are already configured:
 rewards-worker: SERVICE_MODE=worker
 ```
 
-The Supabase, Helius, worker-limit, StonkFun, dry-run, and launch-gate variables are already installed in this worker. Leave them unchanged. Admin authorization belongs to the Vercel API and does not need to be duplicated into the worker.
+The private key must resolve to `TOPBLAST_TREASURY_ADDRESS`. Never put it in Vercel or Supabase. Keep `PAYOUT_MODE=manual_wallet` until the match and small payout ceiling are verified. The Supabase, Helius, worker-limit, StonkFun, dry-run, and launch-gate variables are already installed in this worker. Admin authorization belongs to the Vercel API and does not need to be duplicated into the worker.
 
 The worker source is this launchpad repository on `main`. For a deliberate CLI deployment, use explicit targets:
 
@@ -137,7 +140,7 @@ To close anonymous test creation, set this flag to `false` and redeploy. Existin
 
 After treasury review, change `LAUNCHES_ENABLED=true` in Vercel and the dedicated Railway worker, then redeploy. Enable `PUMPFUN_ENABLED=true` in both only when including Pump in controlled testing. `/api/health` must report the selected venue's `launchReady=true`; this does not certify rewards or replace the acceptance cycle.
 
-Leave these unchanged:
+Leave payout mode manual until the controlled payout. Then choose exactly one path:
 
 ```text
 DRY_RUN=true
@@ -150,9 +153,9 @@ Run one controlled launch. Verify its mint, pool, launch transaction, active tra
 
 The Railway worker runs continuously, writes a heartbeat to `system_config`, replays finalized blocks from each launch slot, validates LaunchLab swap accounts and exact SPL movements, records conservative prices, reconciles deposits and payouts, survives restarts, and isolates every query by `launch_id`. It continues indexing while `reward_engine_paused=true`, but creates no new epochs.
 
-After reviewing a dry-run epoch, use `/admin` to prepare the exact payout transaction. Verify its epoch, launch, reward mint, treasury, recipients, total, and SHA-256 manifest hash before approving it with the treasury browser wallet. Signed bytes are persisted before broadcast and finalized bytes are reconciled before any row becomes paid.
+After reviewing a dry-run epoch, verify its epoch, launch, reward mint, treasury, recipients, total, and SHA-256 manifest hash. In manual mode, approve it with the treasury browser wallet. In `server_signer` mode, the Railway worker signs the exact stored message, enforces `TOPBLAST_MAX_PAYOUT_ATOMS`, broadcasts one batch at a time, and will not create another transfer while an earlier signature is unresolved. Signed bytes are persisted before broadcast and finalized bytes are reconciled before any row becomes paid.
 
-For the controlled real-money acceptance only, set `DRY_RUN=false` after reviewing the addresses and tiny amounts. Explicit creator funding and each payout still require a browser-wallet signature. The application has no private-key environment variable and does not perform unattended signing.
+For the controlled real-money acceptance only, set `DRY_RUN=false` after reviewing the addresses and tiny amounts. Explicit creator funding still requires the creator wallet. Holder payouts use either browser approval or the isolated Railway signer selected by `PAYOUT_MODE`; holders never claim and never provide a key.
 
 Run the acceptance cycle with deliberately tiny amounts:
 

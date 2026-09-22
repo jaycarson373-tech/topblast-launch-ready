@@ -70,9 +70,13 @@ export async function reconcilePayoutBatch(batchId: string) {
   if (!finality) {
     const height = await solanaRpc<number>("getBlockHeight", [{ commitment: "finalized" }]);
     if (batch.last_valid_block_height && height > Number(batch.last_valid_block_height)) {
-      const { error: expireError } = await db.rpc("expire_payout_batch", { p_batch_id: batchId });
-      if (expireError) throw expireError;
-      return { status: "expired_reprepare", signature: batch.signature, batchId };
+      // Never rebuild an expired transaction from a single missing RPC result.
+      // A validator may have accepted it while the queried RPC is delayed or
+      // missing archival history. Keep the exact signed bytes bound until a
+      // later reconciliation proves the original transaction's outcome.
+      const message = "Expired blockhash; archival reconciliation required before any replacement";
+      await db.from("payout_batches").update({ status: "uncertain", error_message: message, updated_at: new Date().toISOString() }).eq("id", batchId).neq("status", "confirmed");
+      return { status: "uncertain_expired", signature: batch.signature, batchId };
     }
     return { status: "submitted", signature: batch.signature, batchId };
   }

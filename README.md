@@ -2,7 +2,7 @@
 
 The StonkFun launchpad layer for funded TopBlast rewards.
 
-Creators launch through StonkFun’s official direct LaunchLab integration: live pricing, its standard platform, and its onchain launch rules. The retired fee-payment creation API is used only to recover old receipts. New creation uses the official Raydium SDK, a browser-held mint signer, and creator-wallet approval. TopBlast registers the finalized market, tracks verified buy basis per launch, accepts attributable deposits, reserves funded budgets, prepares wallet-approved payouts, and reconciles finality. Real end-to-end reward acceptance is still required before public activation.
+Creators launch through StonkFun’s official direct LaunchLab integration: live pricing, its standard platform, and its onchain launch rules. The retired fee-payment creation API is used only to recover old receipts. New creation uses the official Raydium SDK, a browser-held mint signer, and creator-wallet approval. TopBlast registers the finalized market, tracks verified buy basis per launch, accepts attributable deposits, reserves funded budgets, and sends direct holder airdrops. Payouts can use manual treasury approval or the isolated Railway signer ported from the original TopBlast worker. Real end-to-end reward acceptance is still required before public activation.
 
 ## Funding model
 
@@ -16,6 +16,7 @@ Stonk documents creator-fee forwarding for adopted standard launches, but TopBla
 - Conservative finalized price coverage using the higher of TWAP or spot
 - Loss-weighted deterministic allocation bounded by funded budget
 - Durable leases, cursors, idempotency keys, saved signed wire bytes, and finalized reconciliation
+- Direct SPL `TransferChecked` holder airdrops with exact-message signing and a per-batch operator ceiling
 
 The prior single-token implementation was used as the behavioral source. Configuration and every financial row are now scoped by `launch_id`.
 

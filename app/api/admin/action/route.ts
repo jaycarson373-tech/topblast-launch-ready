@@ -41,10 +41,10 @@ export async function GET(request: Request) {
     const amounts = fundingTotals[item.asset_mint] ??= { available: "0", reserved: "0", submitted: "0", paid: "0" };
     for (const name of ["available", "reserved", "submitted", "paid"] as const) amounts[name] = (BigInt(amounts[name]) + BigInt(item[`${name}_atoms`])).toString();
   }
-  const heartbeat = config.data?.find((item) => item.key === "worker_heartbeat")?.value as { at?: string } | undefined;
+  const heartbeat = config.data?.find((item) => item.key === "worker_heartbeat")?.value as { at?: string; payoutMode?: string } | undefined;
   const workerFresh = Boolean(heartbeat?.at && Date.now() - new Date(heartbeat.at).getTime() < 180_000);
   const trackerHealth = !rows.length ? "NO MARKETS" : rows.some((item) => item.tracker_error || item.price_status === "failed") ? "DEGRADED" : rows.every((item) => item.history_complete) ? "CAUGHT UP" : "BACKFILLING";
-  return NextResponse.json({ activeLaunches: launches.count ?? 0, trackerHealth, workerFresh, workerHeartbeat: heartbeat ?? null, lastIndexedBlock: lastIndexed, finalizedSlot, indexingLag: finalizedSlot !== null && lastIndexed !== null ? finalizedSlot - lastIndexed : null, failedEpochs: failedEpochs.count ?? 0, failedPayouts: failedPayouts.count ?? 0, reconciliationProblems: inboxFailures.count ?? 0, observedCreatorFeesByAsset: observedFees, fundingBalances: fundingTotals, treasuryBalances, payoutMode: "wallet_approved", dryRun: process.env.DRY_RUN !== "false", pendingApprovalBatches: approvals.data ?? [], config: config.data ?? [] });
+  return NextResponse.json({ activeLaunches: launches.count ?? 0, trackerHealth, workerFresh, workerHeartbeat: heartbeat ?? null, lastIndexedBlock: lastIndexed, finalizedSlot, indexingLag: finalizedSlot !== null && lastIndexed !== null ? finalizedSlot - lastIndexed : null, failedEpochs: failedEpochs.count ?? 0, failedPayouts: failedPayouts.count ?? 0, reconciliationProblems: inboxFailures.count ?? 0, observedCreatorFeesByAsset: observedFees, fundingBalances: fundingTotals, treasuryBalances, payoutMode: heartbeat?.payoutMode ?? "wallet_approved", dryRun: process.env.DRY_RUN !== "false", pendingApprovalBatches: approvals.data ?? [], config: config.data ?? [] });
 }
 
 export async function POST(request: Request) {
@@ -56,7 +56,7 @@ export async function POST(request: Request) {
     if (error || !heartbeat?.value?.at || Date.now() - new Date(heartbeat.value.at).getTime() > 180_000) return NextResponse.json({ error: "A healthy worker is required" }, { status: 409 });
     const result = await db.from("system_config").upsert({ key: "reward_engine_paused", value: false, updated_at: new Date().toISOString() });
     if (result.error) return NextResponse.json({ error: result.error.message }, { status: 500 });
-    return NextResponse.json({ ok: true, dryRun: process.env.DRY_RUN !== "false", payoutMode: "wallet_approved" });
+    return NextResponse.json({ ok: true, dryRun: process.env.DRY_RUN !== "false", payoutMode: heartbeat.value?.payoutMode ?? "wallet_approved" });
   }
   if (body.action === "pause_engine") {
     const { error } = await db.from("system_config").upsert({ key: "reward_engine_paused", value: true, updated_at: new Date().toISOString() });

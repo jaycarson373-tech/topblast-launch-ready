@@ -7,6 +7,7 @@ import { registerLaunchTracker } from "../lib/db/launch-repository";
 import { planEpoch, reconcileMarket, reconcilePayoutBatches } from "../lib/worker/pipeline";
 import { launchVenue } from "../lib/venue/registry";
 import { submitBoundLaunch } from "../lib/venue/launch-submission-service";
+import { automaticPayoutsConfigured, processAutomaticPayout } from "../lib/payout/automatic";
 
 const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -42,7 +43,7 @@ async function runCycle() {
   needsBackfill = false;
   const { error: heartbeatError } = await db.from("system_config").upsert({
     key: "worker_heartbeat",
-    value: { at: lastCycleAt, owner, mode: dryRun ? "dry_run" : "approval_required", payoutMode: "wallet_approved", pipeline: "operational" },
+    value: { at: lastCycleAt, owner, mode: dryRun ? "dry_run" : "live", payoutMode: automaticPayoutsConfigured() ? "server_signer" : "wallet_approved", pipeline: "operational" },
     updated_at: lastCycleAt,
   });
   if (heartbeatError) throw heartbeatError;
@@ -100,6 +101,14 @@ async function runCycle() {
       await db.from("system_config").upsert({ key: `epoch_error:${market.launch_id}`, value: { message, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
       process.stderr.write(`${market.launch_id}: ${message}\n`);
     }
+  }
+  try {
+    const payout = await processAutomaticPayout(db, owner);
+    if (payout.status !== "disabled" && payout.status !== "idle") process.stdout.write(`${new Date().toISOString()} payout ${JSON.stringify(payout)}\n`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "automatic payout failed";
+    await db.from("system_config").upsert({ key: "automatic_payout_error", value: { message, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
+    process.stderr.write(`automatic payout: ${message}\n`);
   }
 }
 
