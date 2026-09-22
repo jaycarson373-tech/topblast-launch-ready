@@ -23,11 +23,15 @@ export async function solanaRpc<T>(method: string, params: unknown[] = []): Prom
         if (body.result === undefined) throw new Error("Solana RPC returned no result");
         return body.result;
       }
-      if (body.error.code !== -32005 || attempt === 4) throw new Error(`Solana RPC ${body.error.code}: ${body.error.message}`);
+      // A load-balanced node can lag a finalized context returned by another node.
+      // Retry the exact request, never remove minContextSlot or weaken commitment.
+      if (body.error.code === -32016 && attempt === 4) throw new Error("Solana RPC is still catching up to the required finalized slot. Retry the same action shortly; keep any existing payment receipt.");
+      if (![-32005, -32016].includes(body.error.code) || attempt === 4) throw new Error(`Solana RPC ${body.error.code}: ${body.error.message}`);
     } else if ((response.status !== 429 && response.status < 500) || attempt === 4) {
       throw new Error(`Solana RPC returned HTTP ${response.status}`);
     }
-    await response.body?.cancel();
+    // json() already consumed and locked the stream on JSON-RPC error responses.
+    if (!response.bodyUsed) await response.body?.cancel();
     await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
   }
   throw new Error("Solana RPC retry exhausted");

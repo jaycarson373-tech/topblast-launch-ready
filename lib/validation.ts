@@ -52,5 +52,5 @@ export const submitLaunchSchema = z.object({
 export function validateMinimumReward(percent: number): void {
   const minimum = Number(process.env.TOPBLAST_MIN_REWARD_PERCENT ?? "50");
   if (!Number.isFinite(minimum) || minimum < 0 || minimum > 100) throw new Error("Invalid TOPBLAST_MIN_REWARD_PERCENT");
-  if (percent < minimum) throw new Error(`TopBlast allocation must be at least ${minimum}%`);
+  if (percent < minimum) throw new Error(`TopBlast rewards must receive at least ${minimum}% of gross funding after the protocol allocation. Increase the Rewards control.`);
 }

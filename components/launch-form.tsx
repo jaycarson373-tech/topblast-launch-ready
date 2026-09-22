@@ -6,7 +6,7 @@ import { paymentSignatureFromTransaction } from "@/lib/solana/transaction-signat
 import { getWallets } from "@wallet-standard/app";
 import { VenueBadge } from "@/components/venue-badge";
 import Image from "next/image";
-import { initialLaunchAllocation, updateLaunchAllocation, CREATOR_REWARD_PERCENT, FIXED_PROTOCOL_PERCENT } from "@/lib/launch-allocation";
+import { initialCreatorShare, updateCreatorShare, creatorShareToAllocation, CREATOR_SHARE_STEP, CREATOR_REWARD_PERCENT, FIXED_PROTOCOL_PERCENT } from "@/lib/launch-allocation";
 import { validateTokenImage } from "@/lib/token-image";
 
 const STONK_MINT = process.env.NEXT_PUBLIC_STONK_QUOTE_MINT ?? "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx";
@@ -32,9 +32,8 @@ interface Prepared {
   paymentTransaction: string;
   payment: { lamports?: string | number; sol?: string | number; recipient?: string };
   expiresAt?: string;
-  review: { name: string; symbol: string; venue: string; quoteSymbol: string; allocation: typeof initialAllocation };
+  review: { name: string; symbol: string; venue: string; quoteSymbol: string; allocation: ReturnType<typeof creatorShareToAllocation>; creatorShare: typeof initialCreatorShare };
 }
-const initialAllocation = initialLaunchAllocation;
 
 const toDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
   const reader = new FileReader();
@@ -54,7 +53,8 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
   const [selectedWallet, setSelectedWallet] = useState("");
   const [walletName, setWalletName] = useState("");
   const [walletObject, setWalletObject] = useState<WalletLike | null>(null);
-  const [allocation, setAllocation] = useState(initialAllocation);
+  const [creatorShare, setCreatorShare] = useState(initialCreatorShare);
+  const allocation = useMemo(() => creatorShareToAllocation(creatorShare), [creatorShare]);
   const [prepared, setPrepared] = useState<Prepared | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [logo, setLogo] = useState("");
@@ -165,7 +165,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
       const response = await fetch("/api/launch/prepare", { method: "POST", headers: requestHeaders(), body: JSON.stringify(payload) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Could not prepare launch");
-      setPrepared({ ...body, logo, review: { venue, quoteSymbol: payload.quoteSymbol, name: String(payload.name), symbol: String(payload.symbol).toUpperCase(), allocation: { ...allocation } } });
+      setPrepared({ ...body, logo, review: { venue, quoteSymbol: payload.quoteSymbol, name: String(payload.name), symbol: String(payload.symbol).toUpperCase(), allocation: { ...allocation }, creatorShare: { ...creatorShare } } });
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not prepare launch"); }
     finally { setBusy(false); }
   }
@@ -249,16 +249,17 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
         <div className="section-label">TopBlast rewards</div>
         <h3>Fund the blast zone.</h3>
         <p className="notice">When eligible holders fall below their verified average entry, they share the funded TopBlast reward pool. Creators claim venue fees to their wallet, then deposit a declared gross amount through the creator dashboard, and the fixed allocation is enforced by that transaction.</p>
+        <p className="notice"><strong>Split 100% of your share.</strong> These controls divide your {CREATOR_REWARD_PERCENT}% share, not the gross funding amount.</p>
         <div className="allocation-grid allocation-grid-two">
           {(["topblastPercent", "creatorPercent"] as const).map((key) => (
             <label className="allocation" key={key}>
               <span className="section-label">{key === "topblastPercent" ? "TopBlast rewards" : "Creator"}</span>
-              <input aria-label={key === "topblastPercent" ? "TopBlast rewards percent" : "Creator percent"} type="number" min="0" max={CREATOR_REWARD_PERCENT} value={allocation[key]} onChange={(event) => setAllocation(updateLaunchAllocation(key, Number(event.target.value)))} />
-              <input aria-label={key === "topblastPercent" ? "Adjust TopBlast rewards" : "Adjust creator share"} type="range" min="0" max={CREATOR_REWARD_PERCENT} value={allocation[key]} onChange={(event) => setAllocation(updateLaunchAllocation(key, Number(event.target.value)))} />
+              <output className="allocation-percent">{creatorShare[key]}%</output>
+              <input aria-label={key === "topblastPercent" ? "Adjust TopBlast rewards" : "Adjust creator share"} aria-valuetext={`${creatorShare[key]}% of your share`} type="range" min="0" max="100" step={CREATOR_SHARE_STEP} value={creatorShare[key]} onChange={(event) => setCreatorShare(updateCreatorShare(key, Number(event.target.value)))} />
             </label>
           ))}
         </div>
-        <p className="notice">Rewards + creator: {CREATOR_REWARD_PERCENT}%. Fixed protocol allocation: {FIXED_PROTOCOL_PERCENT}%. Total: {total}%. <a href="/docs#funding">How funding works</a>.</p>
+        <p className="notice">Your share total: {creatorShare.topblastPercent + creatorShare.creatorPercent}%. Adjust in {CREATOR_SHARE_STEP}-point steps. Protocol receives a fixed {FIXED_PROTOCOL_PERCENT}% of gross funding before your share is split. <a href="/docs#funding">How funding works</a>.</p>
       </div>
       </fieldset>
       {prepared && !receipt && (
@@ -268,7 +269,8 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
           {testMode && <p className="notice"><strong>TEST LAUNCH · HIDDEN FROM PUBLIC TOPBLAST PAGES</strong><br />This is a real Solana mainnet transaction, not a simulation-only launch.</p>}
           <h3>{prepared.review.name} · ${prepared.review.symbol}</h3>
           <Image src={prepared.logo} alt="Token image included in this launch" width={96} height={96} className="review-token-image" unoptimized />
-          <p className="notice">Venue: {prepared.review.venue === "pumpfun" ? "Pump.fun" : "StonkFun"}. Pair: {prepared.review.symbol} / {prepared.review.quoteSymbol}. Allocation: {prepared.review.allocation.topblastPercent}% rewards, {prepared.review.allocation.creatorPercent}% creator retained, {prepared.review.allocation.protocolPercent}% protocol.</p>
+          <p className="notice">Venue: {prepared.review.venue === "pumpfun" ? "Pump.fun" : "StonkFun"}. Pair: {prepared.review.symbol} / {prepared.review.quoteSymbol}. Your share: {prepared.review.creatorShare.topblastPercent}% rewards / {prepared.review.creatorShare.creatorPercent}% creator.</p>
+          <p className="notice">Overall funding allocation: {prepared.review.allocation.topblastPercent}% rewards, {prepared.review.allocation.creatorPercent}% creator retained, {prepared.review.allocation.protocolPercent}% protocol. Your two controls divide the remaining {CREATOR_REWARD_PERCENT}%, not 100% of gross funding.</p>
           {prepared.review.venue === "pumpfun" && <p className="notice">Shown SOL cost is the simulated debit for network fees and account creation. No initial buy. Creator fees follow Pump.fun’s schedule. TopBlast rewards require a separate creator deposit.</p>}
           {prepared.raw?.creationMethod === "stonk_launchlab" && <p className="notice">StonkFun standard launch through its published LaunchLab configuration. Shown SOL cost covers simulated network fees and account rent, not an initial buy or reward funding. Stonk’s token listing may take time to appear.</p>}
           {prepared.raw?.venueFees && <p className="notice">Venue trading fees: {((Number(prepared.raw.venueFees.protocolRate) + Number(prepared.raw.venueFees.platformRate) + Number(prepared.raw.venueFees.creatorRate)) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% total, including {(Number(prepared.raw.venueFees.creatorRate) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% creator fee. These are separate from the TopBlast deposit allocation.</p>}
