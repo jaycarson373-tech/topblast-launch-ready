@@ -12,7 +12,7 @@ export const metadata: Metadata = {
   description: "Launch through StonkFun or Pump.fun and add funded rewards for verified holders below their entry.",
   alternates: { canonical: "./" },
   applicationName: "TopBlast Launch",
-  icons: { icon: "/favicon.svg", apple: "/apple-touch-icon.png" },
+  icons: { icon: "/favicon.png", apple: "/apple-touch-icon.png" },
   openGraph: {
     title: "TopBlast Launch | Launch Underneath. Rewards on Top.",
     description: "Launch through StonkFun or Pump.fun and add funded rewards for verified holders below their entry.",

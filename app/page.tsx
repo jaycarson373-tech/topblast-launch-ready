@@ -8,7 +8,7 @@ export default function Home() {
     <section className="hero shell">
       <div className="eyebrow">REWARD INFRASTRUCTURE FOR TOKEN LAUNCHES</div>
       <div className="hero-grid"><div>
-        <Image className="hero-mark" src="/logo-mark.svg" alt="TopBlast Launch" width={82} height={82} priority />
+        <Image className="hero-mark" src="/logo-mark.png" alt="TopBlast Launch" width={82} height={82} priority />
         <h1 className="platform-headline">LAUNCH<br />UNDERNEATH.<br /><span>REWARDS<br />ON TOP.</span></h1>
         <p className="hero-copy">Launch through StonkFun or Pump.fun. Fund an isolated reward pool. Verified holders below their entry can share each epoch.</p>
         <LaunchActions /><p className="proof-line">No funded pool. No reward.</p>
