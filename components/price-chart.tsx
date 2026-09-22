@@ -9,6 +9,8 @@ export function PriceChart({ points, decimals, quoteSymbol = "STONK" }: { quoteS
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const initialized = useRef(false);
+  const userMoved = useRef(false);
+  const rangeRef = useRef("ALL");
   const normalized = useMemo(() => chartPoints(points, decimals), [points, decimals]);
   const hasPoints = normalized.length > 0;
   const [range, setRange] = useState("ALL");
@@ -32,12 +34,13 @@ export function PriceChart({ points, decimals, quoteSymbol = "STONK" }: { quoteS
     if (!seriesRef.current || !chartRef.current) return;
     const visible = chartRef.current.timeScale().getVisibleRange();
     seriesRef.current.setData(normalized.map(point => ({ ...point, time: point.time as UTCTimestamp })));
-    if (!initialized.current) { chartRef.current.timeScale().fitContent(); initialized.current = true; }
+    if (!initialized.current || (rangeRef.current === "ALL" && !userMoved.current)) { chartRef.current.timeScale().fitContent(); initialized.current = true; }
     else if (visible) chartRef.current.timeScale().setVisibleRange(visible);
   }, [normalized]);
 
   function applyRange(next: string) {
     setRange(next);
+    rangeRef.current = next; userMoved.current = false;
     const seconds = next === "1H" ? 3600 : next === "1D" ? 86400 : next === "7D" ? 604800 : 0;
     if (!chartRef.current) return;
     if (!seconds) { chartRef.current.timeScale().fitContent(); return; }
@@ -45,5 +48,5 @@ export function PriceChart({ points, decimals, quoteSymbol = "STONK" }: { quoteS
     chartRef.current.timeScale().setVisibleRange({ from: (to - seconds) as UTCTimestamp, to });
   }
   if (!hasPoints) return <div className="chart-empty">Price history becomes available after the finalized tracker records the market.</div>;
-  return <section className="chart-panel" aria-label={`Finalized ${quoteSymbol} price chart`}><div className="chart-head"><div><div className="section-label">Finalized market price</div><h3>Token / {quoteSymbol}</h3></div><div className="chart-ranges" aria-label="Chart timeframes">{["1H", "1D", "7D", "ALL"].map((item) => <button type="button" className={range === item ? "active" : ""} key={item} onClick={() => applyRange(item)}>{item}</button>)}</div></div><div ref={host} className="chart-host" /><p className="notice">Drag to pan. Scroll or pinch to zoom. Data comes from finalized, verified venue account observations.</p></section>;
+  return <section className="chart-panel" aria-label={`Finalized ${quoteSymbol} price chart`}><div className="chart-head"><div><div className="section-label">Finalized market price</div><h3>Token / {quoteSymbol}</h3></div><div className="chart-ranges" aria-label="Chart timeframes">{["1H", "1D", "7D", "ALL"].map((item) => <button type="button" className={range === item ? "active" : ""} key={item} onClick={() => applyRange(item)}>{item}</button>)}</div></div><div ref={host} className="chart-host" onPointerDown={() => { userMoved.current = true; }} onWheel={() => { userMoved.current = true; }} /><p className="notice">Drag to pan. Scroll or pinch to zoom. Data comes from finalized, verified venue account observations.</p></section>;
 }

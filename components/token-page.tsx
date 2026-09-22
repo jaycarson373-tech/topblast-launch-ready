@@ -17,6 +17,7 @@ function atoms(value: unknown, decimals: number) {
 
 export function TokenPage({ address }: { address: string }) {
   const [data, setData] = useState<{
+    requestedAddress: string;
     launch: Record<string, unknown>; market: Record<string, unknown> | null; funding: Record<string, unknown> | null;
     epochs: Record<string, unknown>[]; prices: Array<{ block_time: string; price_quote_atoms_per_token: string }>;
     allocations: Record<string, unknown>[]; deposits: Record<string, unknown>[]; totalRewardedAtoms: string; enginePaused: boolean;
@@ -35,16 +36,17 @@ export function TokenPage({ address }: { address: string }) {
       try {
         const { response, body } = await clientJson(`/api/token/${encodeURIComponent(address)}`, { cache: "no-store" }, 25_000, "Market refresh timed out. Try again.");
         if (!response.ok) throw new Error(body.error ?? "Market data unavailable");
-        if (active) { setData(body); setError(""); }
+        if (active) { setData({ ...body, requestedAddress: address }); setError(""); }
       } catch (caught) { if (active) setError(caught instanceof Error ? caught.message : "Market data unavailable"); }
       finally { pending = false; if (active) setRefreshing(false); }
     }
     void refresh(); const timer = window.setInterval(() => void refresh(), 15_000);
     return () => { active = false; clearInterval(timer); };
   }, [address, refreshKey]);
+  useEffect(() => { setHolder(null); setWallet(""); }, [address]);
   async function lookup() { setError(""); setHolder(null); try { const response = await fetch(`/api/token/${address}/wallet/${encodeURIComponent(wallet)}`); const body = await response.json(); if (!response.ok) { setError(body.error); return; } setHolder(body); } catch { setError("Wallet lookup failed. Please try again."); } }
-  if (error && !data) return <main className="page shell"><div className="error">{error}</div><button className="button" onClick={() => setRefreshKey(key => key + 1)}>Retry market data</button></main>;
-  if (!data) return <main className="page shell"><div className="empty">Loading verified launch data...</div></main>;
+  if (error && (!data || data.requestedAddress !== address)) return <main className="page shell"><div className="error">{error}</div><button className="button" onClick={() => setRefreshKey(key => key + 1)}>Retry market data</button></main>;
+  if (!data || data.requestedAddress !== address) return <main className="page shell"><div className="empty">Loading verified launch data...</div></main>;
   const launch = data.launch;
   const venueName = launch.venue === "pumpfun" ? "Pump.fun" : "StonkFun";
   const rewardSymbol = launch.venue === "pumpfun" ? "WSOL" : String(launch.quote_symbol);
