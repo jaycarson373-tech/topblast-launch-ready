@@ -17,10 +17,10 @@ export default function Home() {
             <p className="hero-copy">Bought in. Price dropped. Still holding? TopBlast is designed to share funded rewards with verified buyers below their entry.</p>
             <div className="hero-actions">
               <Link className="button" href="/launch">Launch token</Link>
-              <Link className="button button-secondary" href="/test">Test without funds</Link>
+              <Link className="button button-secondary" href="/explore">Explore launches</Link>
             </div>
             <div className="venue-row hero-venues"><small>Launch through</small><VenueBadge venue="stonkfun" /><VenueBadge venue="pumpfun" /></div>
-            <p className="microcopy">Your venue underneath. TopBlast on top. Free rehearsal available now.</p>
+            <p className="microcopy">Your token. Your venue underneath. TopBlast on top.</p>
           </div>
           <BlastExample />
         </div>
@@ -45,7 +45,7 @@ export default function Home() {
       <section className="shell funding-explainer">
         <div className="eyebrow">WHERE REWARDS COME FROM</div>
         <h2>FUNDED FIRST.<br />REWARDED SECOND.</h2>
-        <p>Creators choose how deposited creator-fee revenue is allocated. A 70 / 20 / 10 setting means 70% for holder rewards, 20% for the creator, and 10% for the protocol.</p>
+        <p>Creators split their share between holder rewards and creator revenue. An 80% rewards / 20% creator selection divides the creator’s 90% share: 72% of gross funding goes to rewards, 18% stays with the creator, and 10% goes to the protocol.</p>
         <p>Creators receive or claim venue fees in their own wallet. The creator explicitly deposits the configured reward and protocol portions through a verified launch-scoped transaction. A percentage setting alone never counts as funding.</p>
         <Link className="button button-secondary" href="/launch">Review launch setup</Link>
       </section>

@@ -41,10 +41,18 @@ export async function reconcileMarket(db: SupabaseClient, row: MarketRow, owner:
   let leaseRenewedAt = startedAt;
   if (end > cursor) {
     const produced = await solanaRpc<number[]>("getBlocks", [cursor + 1, end, { commitment: "finalized" }]);
-    for (const slot of produced) {
+    // Fetch a small bounded window in parallel, but apply/checkpoint strictly in
+    // chain order. Slow HTTP reads must not make backfill slower than the chain.
+    const width = 4;
+    scan: for (let offset = 0; offset < produced.length; offset += width) {
+      const slots = produced.slice(offset, offset + width);
+      const blocks = await Promise.allSettled(slots.map(slot => solanaRpc<{ blockhash: string; previousBlockhash: string; blockTime: number | null; transactions: FinalizedBlockTransaction[] } | null>("getBlock", [slot, { commitment: "finalized", encoding: "jsonParsed", transactionDetails: "full", rewards: false, maxSupportedTransactionVersion: 1 }])));
+      for (const [index, slot] of slots.entries()) {
       // RPC parses legacy/v0/v1 into the same instruction/account JSON. No
       // legacy SDK wire decoder is used here and v1 compute-fee headers are not basis.
-      const block = await solanaRpc<{ blockhash: string; previousBlockhash: string; blockTime: number | null; transactions: FinalizedBlockTransaction[] } | null>("getBlock", [slot, { commitment: "finalized", encoding: "jsonParsed", transactionDetails: "full", rewards: false, maxSupportedTransactionVersion: 1 }]);
+      const result = blocks[index];
+      if (result.status === "rejected") throw result.reason;
+      const block = result.value;
       if (!block) throw new Error(`Finalized block ${slot} is unavailable`);
       if (Date.now() - leaseRenewedAt >= 20_000) {
         if (!await claim(db, "market", row.launch_id, owner)) throw new Error("Market lease lost; stopping reconciliation");
@@ -72,7 +80,8 @@ export async function reconcileMarket(db: SupabaseClient, row: MarketRow, owner:
       cursor = slot;
       const checkpoint = await db.from("tracked_markets").update({ last_indexed_slot: cursor, last_indexed_blockhash: blockhash, history_complete: false }).eq("launch_id", row.launch_id);
       if (checkpoint.error) throw checkpoint.error;
-      if (Date.now() - startedAt > 45_000) break;
+      if (Date.now() - startedAt > 45_000) break scan;
+      }
     }
     // Only skip unproduced slots after every produced block was processed.
     if (!produced.length || cursor === produced.at(-1)) cursor = end;

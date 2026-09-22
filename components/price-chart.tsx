@@ -1,14 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { ColorType, createChart, LineSeries, type IChartApi, type UTCTimestamp } from "lightweight-charts";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ColorType, createChart, LineSeries, type IChartApi, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
+import { chartPoints } from "@/lib/chart-points";
 
 export function PriceChart({ points, decimals, quoteSymbol = "STONK" }: { quoteSymbol?: string; points: Array<{ block_time: string; price_quote_atoms_per_token: string }>; decimals: number }) {
   const host = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const initialized = useRef(false);
+  const normalized = useMemo(() => chartPoints(points, decimals), [points, decimals]);
+  const hasPoints = normalized.length > 0;
   const [range, setRange] = useState("ALL");
   useEffect(() => {
-    if (!host.current || !points.length) return;
+    if (!host.current || !hasPoints) return;
     const chart = createChart(host.current, {
       height: 360, autoSize: true,
       layout: { background: { type: ColorType.Solid, color: "#fffaf0" }, textColor: "#342f29", attributionLogo: false },
@@ -17,14 +22,19 @@ export function PriceChart({ points, decimals, quoteSymbol = "STONK" }: { quoteS
       handleScroll: true, handleScale: true,
     });
     chartRef.current = chart;
-    const series = chart.addSeries(LineSeries, { color: "#f04b24", lineWidth: 3, priceFormat: { type: "price", precision: Math.min(decimals, 9), minMove: 10 ** -Math.min(decimals, 9) } });
-    const scale = 10 ** decimals;
-    series.setData(points.map((item) => ({ time: Math.floor(new Date(item.block_time).getTime() / 1000) as UTCTimestamp, value: Number(item.price_quote_atoms_per_token) / scale })));
-    chart.timeScale().fitContent();
+    seriesRef.current = chart.addSeries(LineSeries, { color: "#f04b24", lineWidth: 3, pointMarkersVisible: true, priceFormat: { type: "price", precision: Math.min(decimals, 9), minMove: 10 ** -Math.min(decimals, 9) } });
+    initialized.current = false;
     const resize = new ResizeObserver(() => chart.applyOptions({ width: host.current?.clientWidth ?? 0 }));
     resize.observe(host.current);
-    return () => { resize.disconnect(); chartRef.current = null; chart.remove(); };
-  }, [points, decimals]);
+    return () => { resize.disconnect(); chartRef.current = null; seriesRef.current = null; initialized.current = false; chart.remove(); };
+  }, [hasPoints, decimals]);
+  useEffect(() => {
+    if (!seriesRef.current || !chartRef.current) return;
+    const visible = chartRef.current.timeScale().getVisibleRange();
+    seriesRef.current.setData(normalized.map(point => ({ ...point, time: point.time as UTCTimestamp })));
+    if (!initialized.current) { chartRef.current.timeScale().fitContent(); initialized.current = true; }
+    else if (visible) chartRef.current.timeScale().setVisibleRange(visible);
+  }, [normalized]);
 
   function applyRange(next: string) {
     setRange(next);
@@ -34,6 +44,6 @@ export function PriceChart({ points, decimals, quoteSymbol = "STONK" }: { quoteS
     const to = Math.floor(Date.now() / 1000) as UTCTimestamp;
     chartRef.current.timeScale().setVisibleRange({ from: (to - seconds) as UTCTimestamp, to });
   }
-  if (!points.length) return <div className="chart-empty">Price history becomes available after the finalized tracker records the market.</div>;
+  if (!hasPoints) return <div className="chart-empty">Price history becomes available after the finalized tracker records the market.</div>;
   return <section className="chart-panel" aria-label={`Finalized ${quoteSymbol} price chart`}><div className="chart-head"><div><div className="section-label">Finalized market price</div><h3>Token / {quoteSymbol}</h3></div><div className="chart-ranges" aria-label="Chart timeframes">{["1H", "1D", "7D", "ALL"].map((item) => <button type="button" className={range === item ? "active" : ""} key={item} onClick={() => applyRange(item)}>{item}</button>)}</div></div><div ref={host} className="chart-host" /><p className="notice">Drag to pan. Scroll or pinch to zoom. Data comes from finalized, verified venue account observations.</p></section>;
 }
