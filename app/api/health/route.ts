@@ -80,7 +80,7 @@ export async function GET() {
           !pumpSchemaReady && "Launch metadata migration required", !stonkPairReady && "STONK pair unavailable", !stonkCreationReady && stonkCreationError, !treasuryRpcReachable && "Treasury RPC check incomplete"].filter(Boolean) },
       pumpfun: {
         launchReady: pumpLaunchReady, pairReady: pumpPairReady, schemaReady: pumpSchemaReady,
-        enabled: pumpEnabled, rewardAsset: "WSOL", fundingMode: "creator_vault_beta", graduationSupported: false,
+        enabled: pumpEnabled, rewardAsset: "selected_quote", fundingMode: "creator_vault_beta", graduationSupported: false,
         blockers: [
           ...readiness.missing,
           !readiness.launchesEnabled && "LAUNCHES_ENABLED is false",

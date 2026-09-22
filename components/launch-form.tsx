@@ -14,6 +14,7 @@ const STONK_MINT = process.env.NEXT_PUBLIC_STONK_QUOTE_MINT ?? "6GmAFSYs4gk3FDao
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 interface VenuePair { mint: string; symbol: string; name: string; decimals: number; launchable: boolean; launchLabReady?: boolean }
 const STONK_PAIR: VenuePair = { mint: STONK_MINT, symbol: "STONK", name: "STONK", decimals: 9, launchable: true, launchLabReady: true };
+const PUMP_SOL_PAIR: VenuePair = { mint: SOL_MINT, symbol: "SOL", name: "Solana", decimals: 9, launchable: true };
 
 interface WalletAccountLike { address: string; chains: readonly string[] }
 interface WalletLike {
@@ -81,10 +82,14 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
   const [runtime, setRuntime] = useState<{ ready: boolean; missing: string[]; stonkBlockers?: string[]; pumpReady: boolean; pumpBlockers: string[] } | null>(null);
   const [stonkPairs, setStonkPairs] = useState<VenuePair[]>([STONK_PAIR]);
   const [stonkPairMint, setStonkPairMint] = useState(STONK_MINT);
+  const [pumpPairs, setPumpPairs] = useState<VenuePair[]>([PUMP_SOL_PAIR]);
+  const [pumpPairMint, setPumpPairMint] = useState(SOL_MINT);
   const [pairError, setPairError] = useState("");
   const venueReady = Boolean(venue === "stonkfun" ? runtime?.ready : runtime?.pumpReady);
   const total = useMemo(() => allocation.topblastPercent + allocation.creatorPercent + allocation.protocolPercent, [allocation]);
   const stonkPair = stonkPairs.find((pair) => pair.mint === stonkPairMint) ?? STONK_PAIR;
+  const pumpPair = pumpPairs.find((pair) => pair.mint === pumpPairMint) ?? PUMP_SOL_PAIR;
+  const selectedPair = venue === "pumpfun" ? pumpPair : stonkPair;
 
   useEffect(() => {
     try {
@@ -109,6 +114,18 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
         setPairError("");
       })
       .catch((caught) => setPairError(caught instanceof Error ? caught.message : "StonkFun pair list is unavailable"));
+  }, []);
+
+  useEffect(() => {
+    clientJson("/api/venues/pumpfun/pairs", { cache: "no-store" }, 20_000, "Pump.fun pair list timed out")
+      .then(({ response, body }) => {
+        if (!response.ok || !Array.isArray(body.pairs)) throw new Error(body.error ?? "Pump.fun pair list is unavailable");
+        const pairs = (body.pairs as VenuePair[]).filter((pair) => pair.launchable);
+        if (!pairs.length) throw new Error("Pump.fun returned no supported pairs");
+        setPumpPairs(pairs);
+        setPumpPairMint((current) => pairs.some((pair) => pair.mint === current) ? current : pairs[0].mint);
+      })
+      .catch(() => { /* Keep the verified SOL fallback; prepare revalidates it server-side. */ });
   }, []);
 
   function requestHeaders(): Record<string, string> {
@@ -199,7 +216,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
         launchMint: venue === "stonkfun" ? mintSigner.current.publicKey.toBase58() : undefined,
         creatorWallet: connected.address,
         name: form.get("name"), symbol: form.get("symbol"), description: form.get("description"), logo,
-        quoteMint: venue === "pumpfun" ? SOL_MINT : stonkPair.mint, quoteSymbol: venue === "pumpfun" ? "SOL" : stonkPair.symbol, feeTier: form.get("feeTier") ?? "1%", allocation,
+        quoteMint: selectedPair.mint, quoteSymbol: selectedPair.symbol, feeTier: form.get("feeTier") ?? "1%", allocation,
         website: form.get("website"), twitter: form.get("twitter"), telegram: form.get("telegram"),
       };
       const { response, body } = await clientJson("/api/launch/prepare", { method: "POST", headers: requestHeaders(), body: JSON.stringify(payload) }, 70_000, "Preparation timed out. No wallet signature was requested. Your details are still here; try preparing again.");
@@ -297,9 +314,9 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
       {testMode && <section className="form-section"><div className="section-label">Connect your creator wallet</div><p className="notice">1. Connect wallet. 2. Choose your venue and token details. 3. Review the cost and approve in your wallet.</p><p className="notice">Real mainnet costs. {publicTestListing ? "Publicly listed as a pre-launch verification token." : "Hidden on TopBlast."} Onchain and venue activity is public. No token is created until you approve the reviewed transaction.</p>{walletPicker}{wallet && <p className="notice">Connected: <span className="mono">{wallet.address}</span></p>}<p className="notice" role="status">{!runtime ? "Checking venue availability..." : venueReady ? "Venue ready." : "Venue unavailable. The transaction button remains locked."}</p></section>}
       {runtime && !venueReady && <div className="error"><strong>{venue === "pumpfun" ? "Pump.fun unavailable." : "StonkFun unavailable."}</strong> The transaction button stays locked until infrastructure checks pass. No payment can be submitted here.<ul>{(venue === "pumpfun" ? runtime.pumpBlockers : runtime.stonkBlockers ?? []).map((blocker) => <li key={blocker}>{blocker}</li>)}</ul></div>}
       <fieldset disabled={busy || Boolean(prepared) || Boolean(receipt)}>
-      <div className="launch-venue-hint"><VenueBadge venue={venue} /><span>{venue === "pumpfun" ? "SOL pair · WSOL rewards" : `${stonkPair.symbol} pair · ${stonkPair.symbol} rewards`}</span></div>
+      <div className="launch-venue-hint"><VenueBadge venue={venue} /><span>{selectedPair.symbol} pair · {selectedPair.symbol} rewards</span></div>
       <div className="form-grid">
-        <div className="field full"><label htmlFor="venue">Launch venue</label><select id="venue" value={venue} onChange={(event) => setVenue(event.target.value as typeof venue)}><option value="stonkfun">StonkFun · choose any live pair</option><option value="pumpfun">Pump.fun · SOL pair</option></select>{venue === "pumpfun" && <p className="notice">Regular Pump.fun token with TopBlast rewards paid in WSOL. Pump.fun currently creates SOL-paired tokens only. Tracking pauses at graduation until the new market is verified.</p>}</div>
+        <div className="field full"><label htmlFor="venue">Launch venue</label><select id="venue" value={venue} onChange={(event) => setVenue(event.target.value as typeof venue)}><option value="stonkfun">StonkFun · choose any live pair</option><option value="pumpfun">Pump.fun · choose an official supported pair</option></select>{venue === "pumpfun" && <p className="notice">Pump.fun custom pairs use the venue’s current official allowlist. Rewards use the selected quote asset. Arbitrary unapproved mints are rejected, and tracking pauses at unsupported graduation.</p>}</div>
         <div className="field"><label htmlFor="name">Token name</label><input id="name" name="name" required maxLength={32} placeholder="Top Coin" /></div>
         <div className="field"><label htmlFor="symbol">Ticker</label><input id="symbol" name="symbol" required maxLength={10} placeholder="TOP" /></div>
         <div className="field full"><label htmlFor="description">Description</label><textarea id="description" name="description" maxLength={500} placeholder="What this token is for." /></div>
@@ -311,7 +328,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
       </div>
       <div className="form-section">
         <div className="section-label">Pair</div>
-        {venue === "stonkfun" ? <><label className="sr-only" htmlFor="stonk-pair">StonkFun quote pair</label><select id="stonk-pair" className="pair-select" value={stonkPairMint} onChange={(event) => setStonkPairMint(event.target.value)}>{stonkPairs.map((pair) => <option key={pair.mint} value={pair.mint}>{pair.symbol} · {pair.name}</option>)}</select><p className="notice">{stonkPairs.length} live StonkFun pairs available. Reward payouts use the selected quote asset.</p>{pairError && <p className="error">{pairError}. STONK remains available while the catalog reconnects.</p>}<p className="notice mono">{stonkPair.mint}</p></> : <><h3>SOL</h3><p className="notice mono">{SOL_MINT}</p></>}
+        {venue === "stonkfun" ? <><label className="sr-only" htmlFor="stonk-pair">StonkFun quote pair</label><select id="stonk-pair" className="pair-select" value={stonkPairMint} onChange={(event) => setStonkPairMint(event.target.value)}>{stonkPairs.map((pair) => <option key={pair.mint} value={pair.mint}>{pair.symbol} · {pair.name}</option>)}</select><p className="notice">{stonkPairs.length} live StonkFun pairs available. Reward payouts use the selected quote asset.</p>{pairError && <p className="error">{pairError}. STONK remains available while the catalog reconnects.</p>}<p className="notice mono">{stonkPair.mint}</p></> : <><label className="sr-only" htmlFor="pump-pair">Pump.fun quote pair</label><select id="pump-pair" className="pair-select" value={pumpPairMint} onChange={(event) => setPumpPairMint(event.target.value)}>{pumpPairs.map((pair) => <option key={pair.mint} value={pair.mint}>{pair.symbol} · {pair.name}</option>)}</select><p className="notice">{pumpPairs.length} official Pump.fun pairs available. The selected quote asset funds rewards.</p><p className="notice mono">{pumpPair.mint}</p></>}
       </div>
       <div className="form-section">
         <div className="section-label">TopBlast rewards</div>
@@ -339,9 +356,9 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
           <Image src={prepared.logo} alt="Token image included in this launch" width={96} height={96} className="review-token-image" unoptimized />
           <p className="notice">Venue: {prepared.review.venue === "pumpfun" ? "Pump.fun" : "StonkFun"}. Pair: {prepared.review.symbol} / {prepared.review.quoteSymbol}. Your share: {prepared.review.creatorShare.topblastPercent}% rewards / {prepared.review.creatorShare.creatorPercent}% creator.</p>
           <p className="notice">Overall funding allocation: {prepared.review.allocation.topblastPercent}% rewards, {prepared.review.allocation.creatorPercent}% creator retained, {prepared.review.allocation.protocolPercent}% protocol. Your two controls divide the remaining {CREATOR_REWARD_PERCENT}%, not 100% of gross funding.</p>
-          <p className="notice">Reward asset: {prepared.review.venue === "pumpfun" ? "WSOL" : prepared.review.quoteSymbol}. Reward treasury: <span className="mono">{prepared.rewardTreasury ?? "Unavailable. Do not approve until verified."}</span>. Protocol treasury: <span className="mono">{prepared.protocolTreasury ?? "Unavailable. Do not approve until verified."}</span>.</p>
-          <p className="notice"><strong>Permanent configuration:</strong> allocation and token metadata are fixed at launch. {prepared.review.venue === "stonkfun" ? "The onchain creator-fee recipient is the TopBlast treasury. Only finalized fee forwards matching this exact pool can fund its rewards; the worker sends the creator share and eligible-holder airdrops." : "Pump is beta. Creator fees use a creator-wide vault and are not credited until safely attributed per launch. No initial buy, native cashback, mayhem, non-SOL pair, or PumpSwap graduation support."}</p>
-          {prepared.review.venue === "pumpfun" && <p className="notice">Shown SOL cost is the simulated debit for network fees and account creation. No initial buy. Creator fees follow Pump.fun’s schedule. TopBlast rewards require a separate creator deposit.</p>}
+          <p className="notice">Reward asset: {prepared.review.quoteSymbol}. Reward treasury: <span className="mono">{prepared.rewardTreasury ?? "Unavailable. Do not approve until verified."}</span>. Protocol treasury: <span className="mono">{prepared.protocolTreasury ?? "Unavailable. Do not approve until verified."}</span>.</p>
+          <p className="notice"><strong>Permanent configuration:</strong> allocation and token metadata are fixed at launch. {prepared.review.venue === "stonkfun" ? "The onchain creator-fee recipient is the TopBlast treasury. Only finalized fee forwards matching this exact pool can fund its rewards; the worker sends the creator share and eligible-holder airdrops." : "Pump is beta. Creator fees use a creator-wide vault and are not credited until safely attributed per launch. No initial buy, native cashback, mayhem, or PumpSwap graduation support. Only the reviewed official quote pair is accepted."}</p>
+          {prepared.review.venue === "pumpfun" && <p className="notice">Shown SOL cost is the simulated debit for network fees and account creation. No initial buy. Creator fees follow Pump.fun’s schedule. TopBlast rewards require a separate creator deposit in {prepared.review.quoteSymbol}.</p>}
           {prepared.raw?.creationMethod === "stonk_launchlab" && <p className="notice">StonkFun standard launch through its published LaunchLab configuration. Shown SOL cost covers simulated network fees and account rent, not an initial buy or reward funding. Stonk’s token listing may take time to appear.</p>}
           {prepared.raw?.venueFees && <p className="notice">Venue trading fees: {((Number(prepared.raw.venueFees.protocolRate) + Number(prepared.raw.venueFees.platformRate) + Number(prepared.raw.venueFees.creatorRate)) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% total, including {(Number(prepared.raw.venueFees.creatorRate) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% creator fee. For Stonk launches, the fixed TopBlast allocation applies to each verified creator-fee transfer received by the launch treasury.</p>}
           <p className="notice">Network: Solana mainnet. Fee payer: <span className="mono">{wallet?.address}</span>. Estimated SOL debit: {prepared.payment.sol ?? prepared.payment.lamports ?? "See wallet"} {prepared.payment.sol !== undefined ? "SOL" : "lamports"}. Launch program: <span className="mono">{prepared.payment.recipient ?? "Shown by your wallet"}</span>.</p>

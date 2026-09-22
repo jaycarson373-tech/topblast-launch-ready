@@ -27,31 +27,46 @@ export async function readPumpCurve(mint: string, expectedPool: string) {
   if (!response.value || response.value.owner !== PUMP_PROGRAM_ID.toBase58() || response.value.executable || response.value.data[1] !== "base64" || !Number.isSafeInteger(response.context.slot)) throw new Error("Unverified Pump.fun curve account");
   const curve = PUMP_SDK.decodeBondingCurve({ ...response.value, owner: PUMP_PROGRAM_ID, data: Buffer.from(response.value.data[0], "base64") });
   if (curve.complete) throw new Error("Pump.fun curve graduated. Rewards paused until the graduated market is verified.");
-  if (!curve.quoteMint.equals(PublicKey.default) && !curve.quoteMint.equals(NATIVE_MINT)) throw new Error("Only SOL-paired Pump.fun curves are supported");
   if (curve.isMayhemMode || curve.isCashbackCoin || curve.isHolderReward) throw new Error("Unsupported Pump.fun reward or trading mode");
   return { curve, slot: response.context.slot };
 }
 
+export function normalizedPumpQuote(mint: PublicKey) {
+  return mint.equals(PublicKey.default) || mint.equals(NATIVE_MINT) ? NATIVE_MINT : mint;
+}
+
+export async function inspectPumpQuoteMint(mint: string) {
+  if (mint === PUMP_SOL_MINT) return { decimals: 9, tokenProgram: TOKEN_PROGRAM_ID };
+  const response = await solanaRpc<{ value: { owner: string; data: { parsed?: { type?: string; info?: { decimals?: number } } }; executable: boolean } | null }>("getAccountInfo", [mint, { encoding: "jsonParsed", commitment: "finalized" }]);
+  const owner = response.value?.owner;
+  const decimals = response.value?.data?.parsed?.info?.decimals;
+  if (!response.value || response.value.executable || response.value.data?.parsed?.type !== "mint" || !Number.isInteger(decimals) || Number(decimals) < 0 || Number(decimals) > 18 || ![TOKEN_PROGRAM_ID.toBase58(), TOKEN_2022_PROGRAM_ID.toBase58()].includes(String(owner))) throw new Error("Pump.fun quote mint is not a verified SPL mint");
+  return { decimals: Number(decimals), tokenProgram: new PublicKey(owner!) };
+}
+
 export async function inspectPumpMarket(input: { mint: string; pool: string; quoteMint: string; creator: string; launchSignature?: string | null }) {
-  if (input.quoteMint !== PUMP_SOL_MINT) throw new Error("Pump.fun requires the SOL quote mint");
   const { curve } = await readPumpCurve(input.mint, input.pool);
+  if (normalizedPumpQuote(curve.quoteMint).toBase58() !== input.quoteMint) throw new Error("Pump.fun curve quote mint mismatch");
   if (![input.creator, process.env.TOPBLAST_TREASURY_ADDRESS].includes(curve.creator.toBase58())) throw new Error("Pump.fun creator identity mismatch");
   const mint = await solanaRpc<{ value: { owner: string; data: { parsed: { type: string; info: { decimals: number } } } } | null }>("getAccountInfo", [input.mint, { encoding: "jsonParsed", commitment: "finalized" }]);
   if (mint.value?.owner !== TOKEN_2022_PROGRAM_ID.toBase58() || mint.value.data?.parsed?.type !== "mint" || mint.value.data.parsed.info.decimals !== 6) throw new Error("Unexpected Pump.fun mint program or decimals");
   if (!input.launchSignature) throw new Error("Finalized creation signature is required");
   const tx = await solanaRpc<{ slot: number; meta: { err: unknown } | null } | null>("getTransaction", [input.launchSignature, { encoding: "jsonParsed", commitment: "finalized", maxSupportedTransactionVersion: 0 }]);
   if (!tx?.meta || tx.meta.err || !Number.isSafeInteger(tx.slot)) throw new Error("Pump.fun launch has not finalized");
+  const quote = await inspectPumpQuoteMint(input.quoteMint);
+  const quoteIsSol = input.quoteMint === PUMP_SOL_MINT;
   return {
-    programId: PUMP_PROGRAM_ID.toBase58(), launchSlot: tx.slot, baseDecimals: 6, quoteDecimals: 9,
-    baseTokenProgram: TOKEN_2022_PROGRAM_ID.toBase58(), quoteTokenProgram: TOKEN_PROGRAM_ID.toBase58(),
+    programId: PUMP_PROGRAM_ID.toBase58(), launchSlot: tx.slot, baseDecimals: 6, quoteDecimals: quote.decimals,
+    baseTokenProgram: TOKEN_2022_PROGRAM_ID.toBase58(), quoteTokenProgram: quote.tokenProgram.toBase58(),
     authorityAddress: input.pool, creatorAddress: curve.creator.toBase58(), configAddress: GLOBAL_PDA.toBase58(), platformConfigAddress: GLOBAL_PDA.toBase58(),
     baseVault: getAssociatedTokenAddressSync(new PublicKey(input.mint), new PublicKey(input.pool), true, TOKEN_2022_PROGRAM_ID).toBase58(),
-    quoteVault: input.pool,
+    quoteVault: quoteIsSol ? input.pool : getAssociatedTokenAddressSync(new PublicKey(input.quoteMint), new PublicKey(input.pool), true, quote.tokenProgram).toBase58(),
   };
 }
 
-export async function observePumpPrice(market: { marketAddress: string; baseMint: string; creatorAddress: string; tokenDecimals: number }) {
+export async function observePumpPrice(market: { marketAddress: string; baseMint: string; quoteMint: string; creatorAddress: string; tokenDecimals: number }) {
   const { curve, slot } = await readPumpCurve(market.baseMint, market.marketAddress);
+  if (normalizedPumpQuote(curve.quoteMint).toBase58() !== market.quoteMint) throw new Error("Pump.fun price quote mint changed");
   if (curve.creator.toBase58() !== market.creatorAddress) throw new Error("Pump.fun price creator changed");
   const base = BigInt(curve.virtualTokenReserves.toString()), quote = BigInt(curve.virtualQuoteReserves.toString());
   if (base <= 0n || quote <= 0n) throw new Error("Invalid Pump.fun virtual reserves");

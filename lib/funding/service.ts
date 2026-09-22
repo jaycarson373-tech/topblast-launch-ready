@@ -8,6 +8,7 @@ import {
   verifyFinalizedSignedTransaction,
 } from "@/lib/solana/checked-transfers";
 import { solanaRpc } from "@/lib/solana/rpc";
+import { PUMP_SOL_MINT } from "@/lib/solana/pumpfun";
 
 export function decimalToAtoms(value: string, decimals: number) {
   if (!/^\d+(?:\.\d+)?$/.test(value)) throw new Error("Amount must be a positive decimal number");
@@ -36,7 +37,7 @@ export async function prepareLaunchFunding(launchId: string, funderWallet: strin
     mint: launch.quote_mint,
     transfers: [{ recipient: config.treasury_address, amountAtoms: 1n }],
     memo: `TOPBLAST:PROBE:${randomUUID()}`,
-    wrapNative: launch.venue === "pumpfun",
+    wrapNative: launch.venue === "pumpfun" && launch.quote_mint === PUMP_SOL_MINT,
   });
   const gross = decimalToAtoms(amount, mintProbe.decimals);
   const split = splitFundedFees(launchId, launchId, gross, {
@@ -51,7 +52,8 @@ export async function prepareLaunchFunding(launchId: string, funderWallet: strin
   const memo = `TOPBLAST:FUND:${intentId}`;
   const transfers = [{ recipient: config.treasury_address, amountAtoms: split.topblast }];
   if (split.protocol > 0n) transfers.push({ recipient: protocolTreasury!, amountAtoms: split.protocol });
-  const prepared = await prepareCheckedTransfer({ payer: funderWallet, mint: launch.quote_mint, transfers, memo, wrapNative: launch.venue === "pumpfun" });
+  const wrapsNativeSol = launch.venue === "pumpfun" && launch.quote_mint === PUMP_SOL_MINT;
+  const prepared = await prepareCheckedTransfer({ payer: funderWallet, mint: launch.quote_mint, transfers, memo, wrapNative: wrapsNativeSol });
   const expiresAt = new Date(Date.now() + 90_000).toISOString();
   const { error: insertError } = await db.from("funding_intents").insert({
     id: intentId, launch_id: launchId, funder_wallet: funderWallet, asset_mint: launch.quote_mint,
@@ -68,7 +70,7 @@ export async function prepareLaunchFunding(launchId: string, funderWallet: strin
     grossAmountAtoms: gross.toString(), rewardAmountAtoms: split.topblast.toString(),
     creatorAmountAtoms: split.creator.toString(), protocolAmountAtoms: split.protocol.toString(),
     rewardTreasury: config.treasury_address, protocolTreasury: protocolTreasury ?? null, memo,
-    rewardSymbol: launch.venue === "pumpfun" ? "WSOL" : launch.quote_symbol, wrapsNativeSol: launch.venue === "pumpfun",
+    rewardSymbol: launch.quote_symbol, wrapsNativeSol,
   };
 }
 

@@ -4,7 +4,8 @@ import { ComputeBudgetProgram, PublicKey, Transaction } from "@solana/web3.js";
 import { getAdminDb } from "@/lib/db/server";
 import { solanaRpc } from "@/lib/solana/rpc";
 import { launchReviewExpiry } from "@/lib/solana/launch-expiry";
-import { PUMP_SOL_MINT, PUMP_PROGRAM_ID, readPumpCurve, pumpCreationAvailable, assertPumpMainnet } from "@/lib/solana/pumpfun";
+import { PUMP_SOL_MINT, PUMP_PROGRAM_ID, readPumpCurve, pumpCreationAvailable, assertPumpMainnet, inspectPumpQuoteMint } from "@/lib/solana/pumpfun";
+import { listOfficialPumpPairs, officialPumpPair } from "./pump-pairs";
 import { broadcastSignedCheckedTransfer } from "@/lib/solana/checked-transfers";
 import { paymentSignatureFromTransaction } from "@/lib/solana/transaction-signature";
 import type { LaunchDraft } from "@/lib/types";
@@ -24,7 +25,7 @@ export function validatePumpImage(data: string) {
 export class PumpFunAdapter implements LaunchVenueAdapter {
   readonly venue = "pumpfun";
   async createLaunch(input: LaunchDraft): Promise<PreparedLaunch> {
-    if (input.quoteMint !== PUMP_SOL_MINT || !input.pumpMint) throw new Error("Pump.fun requires SOL and a browser-generated mint address");
+    if (!input.pumpMint) throw new Error("Pump.fun requires a browser-generated mint address");
     if (!await pumpCreationAvailable()) throw new Error("Pump.fun has disabled token creation. Try again when the venue reopens it.");
     validatePumpImage(input.logo);
     const user = new PublicKey(input.creatorWallet), mint = new PublicKey(input.pumpMint);
@@ -39,7 +40,10 @@ export class PumpFunAdapter implements LaunchVenueAdapter {
     const metadata = { name: input.name, symbol: input.symbol, description: input.description, image: `${uri}?image=1`, external_url: input.website, twitter: input.twitter, telegram: input.telegram };
     const { error } = await getAdminDb().from("launch_metadata").insert({ id: metadataId, metadata, image_data: input.logo });
     if (error) throw error;
-    const create = await PUMP_SDK.createV2Instruction({ mint, name: input.name, symbol: input.symbol, uri, creator: feeRecipient, user, mayhemMode: false, cashback: false, holderReward: false });
+    const pair = await this.getPair(input.quoteMint);
+    if (!pair?.launchable) throw new Error("This pair is not currently supported for Pump.fun creation");
+    const quote = await inspectPumpQuoteMint(input.quoteMint);
+    const create = await PUMP_SDK.createV2Instruction({ mint, name: input.name, symbol: input.symbol, uri, creator: feeRecipient, user, mayhemMode: false, cashback: false, holderReward: false, ...(input.quoteMint === PUMP_SOL_MINT ? {} : { quoteMint: new PublicKey(input.quoteMint), quoteTokenProgram: quote.tokenProgram }) });
     const latest = await solanaRpc<{ context: { slot: number }; value: { blockhash: string; lastValidBlockHeight: number } }>("getLatestBlockhash", [{ commitment: "confirmed" }]);
     if (!Number.isSafeInteger(latest.context?.slot)) throw new Error("Launch blockhash context unavailable");
     const transaction = new Transaction({ feePayer: user, recentBlockhash: latest.value.blockhash })
@@ -56,7 +60,7 @@ export class PumpFunAdapter implements LaunchVenueAdapter {
     if (!Number.isSafeInteger(after) || after! < 0 || after! >= before.value) throw new Error("Cannot verify Pump.fun creation cost");
     const lamports = String(before.value - after!);
     const expiresAt = await launchReviewExpiry(latest.value.lastValidBlockHeight);
-    return { signedQuote: JSON.stringify({ venue: this.venue, mint: input.pumpMint, pool: bondingCurvePda(mint).toBase58(), feeRecipient: feeRecipient.toBase58(), metadataId, lastValidBlockHeight: latest.value.lastValidBlockHeight }), paymentTransaction: wire, payment: { lamports, sol: Number(lamports) / 1e9, recipient: PUMP_PROGRAM_ID.toBase58() }, expiresAt, raw: { fundingMode: "automatic_creator_fee", rewardAsset: "WSOL", feeRecipient: feeRecipient.toBase58(), nativeHolderRewards: false, simulation: "passed", costDescription: "Simulated SOL debit including network fee and account creation. No initial token purchase." } };
+    return { signedQuote: JSON.stringify({ venue: this.venue, mint: input.pumpMint, pool: bondingCurvePda(mint).toBase58(), quoteMint: input.quoteMint, feeRecipient: feeRecipient.toBase58(), metadataId, lastValidBlockHeight: latest.value.lastValidBlockHeight }), paymentTransaction: wire, payment: { lamports, sol: Number(lamports) / 1e9, recipient: PUMP_PROGRAM_ID.toBase58() }, expiresAt, raw: { fundingMode: "explicit_creator_deposit", rewardAsset: input.quoteSymbol, feeRecipient: feeRecipient.toBase58(), nativeHolderRewards: false, simulation: "passed", costDescription: "Simulated SOL debit including network fee and account creation. No initial token purchase." } };
   }
   async submitLaunch(input: { signedQuote: string; signedTransaction: string; logo: string }): Promise<SubmittedLaunch> {
     // The shared submission service has already bound and validated this exact message.
@@ -83,8 +87,12 @@ export class PumpFunAdapter implements LaunchVenueAdapter {
     return { status: "processing", paymentSignature: signature, raw: { confirmationStatus: status.value[0]?.confirmationStatus ?? "pending" } };
   }
   async getPair(mint: string) {
-    return mint === PUMP_SOL_MINT ? { mint, symbol: "SOL", name: "Solana", decimals: 9, launchable: await pumpCreationAvailable() } : null;
+    const listed = await officialPumpPair(mint);
+    if (!listed) return null;
+    const quote = await inspectPumpQuoteMint(mint);
+    return { ...listed, decimals: quote.decimals, launchable: await pumpCreationAvailable() };
   }
+  async listPairs() { return listOfficialPumpPairs(); }
   async getCreatorFees(mint: string) {
     const { curve } = await readPumpCurve(mint, bondingCurvePda(new PublicKey(mint)).toBase58());
     const vault = creatorVaultPda(curve.creator).toBase58();
@@ -92,7 +100,7 @@ export class PumpFunAdapter implements LaunchVenueAdapter {
   }
   async getMarketData(mint: string, expectedPool: string) {
     await readPumpCurve(mint, expectedPool);
-    return { priceUsd: null, marketCapUsd: null, volume24hUsd: null, liquidityUsd: null, raw: { reason: "USD metrics unavailable; finalized SOL chart is provided separately" } };
+    return { priceUsd: null, marketCapUsd: null, volume24hUsd: null, liquidityUsd: null, raw: { reason: "USD metrics unavailable; the finalized selected-quote chart is provided separately" } };
   }
   async prepareCreatorFeeClaim(): Promise<PreparedFeeClaim> { throw new Error("Claim creator-wide fees on Pump.fun, then use the attributed launch deposit action"); }
   async claimCreatorFees(): Promise<{ signature: string; alreadySubmitted: boolean; raw: Record<string, unknown> }> { throw new Error("Direct fee claiming is not enabled. Use Pump.fun creator fee claims."); }

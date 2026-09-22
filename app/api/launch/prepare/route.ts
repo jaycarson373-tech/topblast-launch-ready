@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { createLaunchDraft } from "@/lib/db/launch-repository";
 import { StonkFunApiError } from "@/lib/venue/stonkfun-adapter";
 import { launchVenue } from "@/lib/venue/registry";
-import { PUMP_SOL_MINT } from "@/lib/solana/pumpfun";
 import { launchDraftSchema, validateMinimumReward } from "@/lib/validation";
 import { assertLaunchReady } from "@/lib/readiness";
 import { getTreasuryBalance, solanaRpc } from "@/lib/solana/rpc";
@@ -26,7 +25,6 @@ export async function POST(request: Request) {
     if (!process.env.TOPBLAST_TREASURY_ADDRESS) throw new Error("TopBlast fee treasury is not configured");
     if (!draft.isTest && draft.venue === "pumpfun" && process.env.PUMPFUN_ENABLED !== "true") throw new Error("Pump.fun acceptance is pending. Creation is not enabled yet.");
     if (draft.creatorWallet === process.env.TOPBLAST_TREASURY_ADDRESS) throw new Error("Use a separate creator wallet so this launch can fund rewards");
-    if (draft.venue === "pumpfun" && draft.quoteMint !== PUMP_SOL_MINT) return NextResponse.json({ error: "Pump.fun currently supports SOL pairs only" }, { status: 400 });
     await getTreasuryBalance(process.env.TOPBLAST_TREASURY_ADDRESS!);
     const adapter = launchVenue(draft.venue);
     const pair = await adapter.getPair(draft.quoteMint);
@@ -35,7 +33,7 @@ export async function POST(request: Request) {
     }
     // Never trust a browser-supplied symbol. Bind the stored/reviewed symbol to
     // the exact venue-verified quote mint selected for this launch.
-    draft.quoteSymbol = draft.venue === "pumpfun" ? "SOL" : pair.symbol;
+    draft.quoteSymbol = pair.symbol;
     const prepared = await adapter.createLaunch(draft);
     if (!prepared.signedQuote || !prepared.paymentTransaction) throw new Error("The venue returned an incomplete launch quote");
     if (draft.isTest && draft.venue === "stonkfun") {
