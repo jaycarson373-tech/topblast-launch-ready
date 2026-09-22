@@ -1,5 +1,6 @@
 import { address } from "@solana/addresses";
 import { z } from "zod";
+import { FIXED_PROTOCOL_PERCENT } from "@/lib/launch-allocation";
 
 const httpsUrl = z.string().url().refine((value) => value.startsWith("https://"), "Use an HTTPS URL");
 const optionalHttpsUrl = z.union([httpsUrl, z.literal("")]).optional().transform((value) => value || undefined);
@@ -36,7 +37,9 @@ export const launchDraftSchema = z.object({
   twitter: optionalHttpsUrl,
   telegram: optionalHttpsUrl,
   feeTier: z.enum(["1%", "2%"]).default("1%"),
-  allocation: allocationSchema,
+  allocation: allocationSchema.refine((value) => value.protocolPercent === FIXED_PROTOCOL_PERCENT, {
+    message: `New launches have a fixed ${FIXED_PROTOCOL_PERCENT}% protocol allocation`,
+  }),
 });
 
 export const submitLaunchSchema = z.object({

@@ -5,6 +5,9 @@ import { Keypair, Transaction } from "@solana/web3.js";
 import { paymentSignatureFromTransaction } from "@/lib/solana/transaction-signature";
 import { getWallets } from "@wallet-standard/app";
 import { VenueBadge } from "@/components/venue-badge";
+import Image from "next/image";
+import { initialLaunchAllocation, updateLaunchAllocation, CREATOR_REWARD_PERCENT, FIXED_PROTOCOL_PERCENT } from "@/lib/launch-allocation";
+import { validateTokenImage } from "@/lib/token-image";
 
 const STONK_MINT = process.env.NEXT_PUBLIC_STONK_QUOTE_MINT ?? "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx";
 
@@ -31,7 +34,7 @@ interface Prepared {
   expiresAt?: string;
   review: { name: string; symbol: string; venue: string; quoteSymbol: string; allocation: typeof initialAllocation };
 }
-const initialAllocation = { topblastPercent: 70, creatorPercent: 20, protocolPercent: 10 };
+const initialAllocation = initialLaunchAllocation;
 
 const toDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
   const reader = new FileReader();
@@ -55,6 +58,9 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
   const [prepared, setPrepared] = useState<Prepared | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [logo, setLogo] = useState("");
+  const [imageName, setImageName] = useState("");
+  const [imageLoading, setImageLoading] = useState(false);
+  const imageReadId = useRef(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<Record<string, string> | null>(null);
@@ -67,7 +73,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
       const saved = localStorage.getItem(receiptKey);
       if (saved) { const parsed = JSON.parse(saved); if (typeof parsed.launchId === "string" && typeof parsed.paymentSignature === "string") setReceipt(parsed); }
     } catch { /* Storage may be unavailable; in-memory state still prevents resubmission. */ }
-    fetch(testMode ? "/api/launch/test-readiness" : "/api/health", { cache: "no-store" })
+    fetch(testMode ? "/api/launch/test-readiness" : "/api/health", { cache: "no-store", signal: AbortSignal.timeout(25_000) })
       .then(async (response) => { const body = await response.json(); if (testMode && !response.ok) throw new Error(body.error ?? "Test availability check failed"); return body; })
       .then((body) => setRuntime(testMode ? body : { ready: body.venues?.stonkfun ? body.venues.stonkfun.launchReady === true : body.ready === true, stonkBlockers: body.venues?.stonkfun?.blockers ?? [], missing: body.missing ?? [], pumpReady: body.venues?.pumpfun?.launchReady === true, pumpBlockers: body.venues?.pumpfun?.blockers ?? ["Pump.fun readiness has not been verified"] }))
       .catch((caught) => { if (testMode) setError(caught instanceof Error ? caught.message : "Test availability check failed"); setRuntime({ ready: false, missing: ["runtime health check"], stonkBlockers: ["Test or infrastructure checks unavailable"], pumpReady: false, pumpBlockers: ["Runtime health check unavailable"] }); });
@@ -76,16 +82,30 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
   async function checkTestAccess() {
     setBusy(true); setError(""); setRuntime(null);
     try {
-      const response = await fetch("/api/launch/test-readiness", { cache: "no-store" });
+      const response = await fetch("/api/launch/test-readiness", { cache: "no-store", signal: AbortSignal.timeout(25_000) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Test availability check failed");
       setRuntime(body);
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "Test readiness unavailable"); }
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Test readiness unavailable"); setRuntime({ ready: false, pumpReady: false, missing: [], stonkBlockers: ["Availability check failed. Retry above."], pumpBlockers: ["Availability check failed. Retry above."] }); }
     finally { setBusy(false); }
   }
 
   function requestHeaders(): Record<string, string> {
     return { "Content-Type": "application/json" };
+  }
+
+  async function previewImage(file: File | undefined) {
+    const readId = ++imageReadId.current;
+    setLogo(""); setImageName(""); setError(""); setImageLoading(Boolean(file));
+    if (!file) return;
+    try {
+      validateTokenImage(file);
+      const data = await toDataUrl(file);
+      if (readId !== imageReadId.current) return;
+      setLogo(data); setImageName(file.name);
+    } catch (caught) {
+      if (readId === imageReadId.current) setError(caught instanceof Error ? caught.message : "Could not read image. Choose it again.");
+    } finally { if (readId === imageReadId.current) setImageLoading(false); }
   }
 
   useEffect(() => {
@@ -206,7 +226,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
   return (
     <form className={`panel launch-form venue-theme-${venue}`} onSubmit={(event) => { event.preventDefault(); void prepare(new FormData(event.currentTarget)); }}>
       {testMode && <section className="form-section"><div className="section-label">Test with your own wallet</div><p className="notice">1. Connect wallet. 2. Choose your venue and token details. 3. Review the cost and approve in your wallet.</p><p className="notice">Real mainnet costs. Hidden on TopBlast, not private onchain or at the venue. No token is created until you approve the reviewed transaction. Reward payouts remain separately gated.</p>{walletPicker}{wallet && <p className="notice">Connected: <span className="mono">{wallet.address}</span></p>}<p className="notice" role="status">{!runtime ? "Checking test availability..." : venueReady ? "Test launch available. No access token required." : "Testing unavailable. Check the message below or retry."}</p><button type="button" className="button button-secondary" disabled={busy || Boolean(prepared)} onClick={() => void checkTestAccess()}>Refresh test availability</button></section>}
-      {runtime && !venueReady && <div className="error"><strong>{venue === "pumpfun" ? "Pump.fun activation pending." : "Launch activation pending."}</strong> The transaction button stays locked until infrastructure checks pass. No payment can be submitted here.<ul>{(venue === "pumpfun" ? runtime.pumpBlockers : runtime.stonkBlockers ?? []).map((blocker) => <li key={blocker}>{blocker}</li>)}</ul></div>}
+      {runtime && !venueReady && <div className="error"><strong>{venue === "pumpfun" ? "Pump.fun unavailable." : "StonkFun unavailable."}</strong> The transaction button stays locked until infrastructure checks pass. No payment can be submitted here.<ul>{(venue === "pumpfun" ? runtime.pumpBlockers : runtime.stonkBlockers ?? []).map((blocker) => <li key={blocker}>{blocker}</li>)}</ul></div>}
       <fieldset disabled={busy || Boolean(prepared) || Boolean(receipt)}>
       <div className="launch-venue-hint"><VenueBadge venue={venue} /><span>{venue === "pumpfun" ? "SOL pair · WSOL rewards" : "STONK pair · STONK rewards"}</span></div>
       <div className="form-grid">
@@ -214,7 +234,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
         <div className="field"><label htmlFor="name">Token name</label><input id="name" name="name" required maxLength={32} placeholder="Top Coin" /></div>
         <div className="field"><label htmlFor="symbol">Ticker</label><input id="symbol" name="symbol" required maxLength={10} placeholder="TOP" /></div>
         <div className="field full"><label htmlFor="description">Description</label><textarea id="description" name="description" maxLength={500} placeholder="What this token is for." /></div>
-        <div className="field full"><label htmlFor="image">Image</label><input id="image" name="image" type="file" required accept="image/png,image/jpeg,image/webp" onChange={async (event) => { const file = event.target.files?.[0]; setLogo(""); if (!file) return; if (file.size > 2_000_000) { setError("Image must be 2 MB or smaller"); return; } setLogo(await toDataUrl(file)); }} /></div>
+        <div className="field full"><label htmlFor="image">Image</label><input id="image" name="image" type="file" required accept="image/png,image/jpeg,image/webp" onChange={(event) => { void previewImage(event.target.files?.[0]); }} /><p className="notice">PNG, JPEG or WebP. Up to 2 MB.</p>{imageLoading && <p className="notice" role="status">Loading image preview...</p>}{logo && <figure className="token-image-preview"><Image src={logo} alt="Selected token image preview" width={120} height={120} unoptimized /><figcaption><strong>Token image preview</strong><span>{imageName}</span><small>This image will be included in your launch.</small></figcaption></figure>}</div>
         <div className="field"><label htmlFor="twitter">X URL</label><input id="twitter" name="twitter" type="url" placeholder="https://x.com/..." /></div>
         <div className="field"><label htmlFor="website">Website URL</label><input id="website" name="website" type="url" placeholder="https://..." /></div>
         <div className="field"><label htmlFor="telegram">Telegram URL</label><input id="telegram" name="telegram" type="url" placeholder="https://t.me/..." /></div>
@@ -229,16 +249,16 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
         <div className="section-label">TopBlast rewards</div>
         <h3>Fund the blast zone.</h3>
         <p className="notice">When eligible holders fall below their verified average entry, they share the funded TopBlast reward pool. Creators claim venue fees to their wallet, then deposit a declared gross amount through the creator dashboard, and the fixed allocation is enforced by that transaction.</p>
-        <div className="allocation-grid">
-          {(["topblastPercent", "creatorPercent", "protocolPercent"] as const).map((key) => (
+        <div className="allocation-grid allocation-grid-two">
+          {(["topblastPercent", "creatorPercent"] as const).map((key) => (
             <label className="allocation" key={key}>
-              <span className="section-label">{key === "topblastPercent" ? "TopBlast rewards" : key === "creatorPercent" ? "Creator" : "Protocol"}</span>
-              <input type="number" min="0" max="100" value={allocation[key]} onChange={(event) => setAllocation({ ...allocation, [key]: Number(event.target.value) })} />
-              <input type="range" min="0" max="100" value={allocation[key]} onChange={(event) => setAllocation({ ...allocation, [key]: Number(event.target.value) })} />
+              <span className="section-label">{key === "topblastPercent" ? "TopBlast rewards" : "Creator"}</span>
+              <input aria-label={key === "topblastPercent" ? "TopBlast rewards percent" : "Creator percent"} type="number" min="0" max={CREATOR_REWARD_PERCENT} value={allocation[key]} onChange={(event) => setAllocation(updateLaunchAllocation(key, Number(event.target.value)))} />
+              <input aria-label={key === "topblastPercent" ? "Adjust TopBlast rewards" : "Adjust creator share"} type="range" min="0" max={CREATOR_REWARD_PERCENT} value={allocation[key]} onChange={(event) => setAllocation(updateLaunchAllocation(key, Number(event.target.value)))} />
             </label>
           ))}
         </div>
-        <p className="notice">Total: {total}% {total === 100 ? "" : " Must equal 100%."}</p>
+        <p className="notice">Rewards + creator: {CREATOR_REWARD_PERCENT}%. Fixed protocol allocation: {FIXED_PROTOCOL_PERCENT}%. Total: {total}%. <a href="/docs#funding">How funding works</a>.</p>
       </div>
       </fieldset>
       {prepared && !receipt && (
@@ -247,6 +267,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
           <div className="token-venue"><VenueBadge venue={prepared.review.venue} /></div>
           {testMode && <p className="notice"><strong>TEST LAUNCH · HIDDEN FROM PUBLIC TOPBLAST PAGES</strong><br />This is a real Solana mainnet transaction, not a simulation-only launch.</p>}
           <h3>{prepared.review.name} · ${prepared.review.symbol}</h3>
+          <Image src={prepared.logo} alt="Token image included in this launch" width={96} height={96} className="review-token-image" unoptimized />
           <p className="notice">Venue: {prepared.review.venue === "pumpfun" ? "Pump.fun" : "StonkFun"}. Pair: {prepared.review.symbol} / {prepared.review.quoteSymbol}. Allocation: {prepared.review.allocation.topblastPercent}% rewards, {prepared.review.allocation.creatorPercent}% creator retained, {prepared.review.allocation.protocolPercent}% protocol.</p>
           {prepared.review.venue === "pumpfun" && <p className="notice">Shown SOL cost is the simulated debit for network fees and account creation. No initial buy. Creator fees follow Pump.fun’s schedule. TopBlast rewards require a separate creator deposit.</p>}
           {prepared.raw?.creationMethod === "stonk_launchlab" && <p className="notice">StonkFun standard launch through its published LaunchLab configuration. Shown SOL cost covers simulated network fees and account rent, not an initial buy or reward funding. Stonk’s token listing may take time to appear.</p>}
@@ -260,7 +281,7 @@ export function LaunchForm({ testMode = false }: { testMode?: boolean }) {
       {result && <div className={result.trackerStatus === "active" ? "success" : "error"}><strong>{result.trackerStatus === "active" ? "Launch complete. TopBlast tracking active." : "Token launched. Tracker registration needs recovery."}</strong><br />Mint: {result.mint}<br />Pool: {result.pool}<br />Signature: {result.signature}{result.trackerStatus !== "active" && <><br />Use the saved payment status recovery to retry tracking. No second payment is required.</>}</div>}
       <div className="form-footer">
         <p className="notice">Your wallet signs the reviewed launch transaction. TopBlast never receives your private key.</p>
-        {!prepared && !receipt && !result && <button className="button venue-button" disabled={busy || total !== 100 || !venueReady}>{busy ? "Preparing..." : !venueReady ? "Activation pending" : wallet ? venue === "pumpfun" ? "Launch on Pump.fun" : "Launch on STONK" : "Connect and launch"}</button>}
+        {!prepared && !receipt && !result && <button className="button venue-button" disabled={busy || imageLoading || total !== 100 || !venueReady}>{busy ? "Preparing..." : !runtime ? "Checking availability..." : !venueReady ? "Temporarily unavailable" : wallet ? venue === "pumpfun" ? "Launch on Pump.fun" : "Launch on STONK" : "Connect and launch"}</button>}
       </div>
       {!testMode && walletPicker}
       {wallet && <p className="notice">Connected: {walletName} · <span className="mono">{wallet.address}</span></p>}

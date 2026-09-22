@@ -14,7 +14,7 @@ test("venue colors remain labelled, change with selection, and retain launch saf
   await expect(form.locator(".venue-badge")).toHaveCSS("color", "rgb(18, 115, 77)");
   await expect(form.locator(".venue-button")).toHaveCSS("background-color", "rgb(18, 115, 77)");
   await expect(page.getByLabel("Token name")).toHaveValue("Retain my token");
-  await expect(page.getByRole("button", { name: "Activation pending", exact: true })).toBeDisabled();
+  await expect(page.locator(".venue-button")).toBeDisabled();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
