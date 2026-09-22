@@ -4,6 +4,7 @@ import { SiteNav } from "@/components/site-nav";
 import { SiteFooter } from "@/components/site-footer";
 import { PlatformProvider } from "@/components/platform-state";
 import { getAdminDb, isDatabaseConfigured } from "@/lib/db/server";
+import { getSiteLinks } from "@/lib/site-links";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://topblastlaunch.xyz"),
@@ -22,6 +23,7 @@ export const metadata: Metadata = {
 };
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const links = getSiteLinks();
   let featuredMint: string | undefined;
   if (process.env.FEATURED_TOKEN_MINT && isDatabaseConfigured()) {
     const { data } = await getAdminDb().from("launches").select("mint,launch_signature").eq("mint", process.env.FEATURED_TOKEN_MINT).eq("is_test", false).eq("listing_hidden", false).in("status", ["active", "paused"]).maybeSingle();
@@ -30,7 +32,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   return (
     <html lang="en">
       <body>
-        <PlatformProvider><SiteNav featuredMint={featuredMint} />
+        <PlatformProvider><SiteNav featuredMint={featuredMint} xUrl={links.x} />
         {children}
         <SiteFooter /></PlatformProvider>
       </body>

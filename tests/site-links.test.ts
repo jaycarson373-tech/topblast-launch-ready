@@ -7,6 +7,12 @@ describe("public footer destinations", () => {
     expect(publicLink(undefined, ["x.com"])).toBeUndefined();
     expect(publicLink("", ["x.com"])).toBeUndefined();
   });
+  it("uses the confirmed TopBlast X profile in the site configuration", async () => {
+    const { getSiteLinks } = await import("../lib/site-links");
+    expect(getSiteLinks().x).toBe("https://x.com/LaunchTopblast");
+    const nav = readFileSync(new URL("../components/site-nav.tsx", import.meta.url), "utf8");
+    expect(nav).toContain('aria-label="TopBlast Launch on X"');
+  });
   it("accepts the confirmed HTTPS profile and token paths", () => {
     expect(publicLink("https://x.com/example", ["x.com"])).toBe("https://x.com/example");
     expect(publicLink("https://dexscreener.com/solana/example", ["dexscreener.com"])).toBe("https://dexscreener.com/solana/example");
