@@ -30,6 +30,7 @@ export function TokenPage({ address }: { address: string }) {
   const [holder, setHolder] = useState<Record<string, unknown> | null>(null);
   const [lookupError, setLookupError] = useState("");
   const [lookingUp, setLookingUp] = useState(false);
+  const [copied, setCopied] = useState(false);
   useEffect(() => {
     let active = true, pending = false;
     async function refresh() {
@@ -52,6 +53,13 @@ export function TokenPage({ address }: { address: string }) {
     catch (caught) { setLookupError(caught instanceof Error ? caught.message : "Wallet lookup failed. Please try again."); }
     finally { setLookingUp(false); }
   }
+  async function copyAddress() {
+    try {
+      await navigator.clipboard.writeText(address);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch { setError("Could not copy the contract address. Select it and copy manually."); }
+  }
   if (error && (!data || data.requestedAddress !== address)) return <main className="page shell"><div className="error">{error}</div><button className="button" onClick={() => setRefreshKey(key => key + 1)}>Retry market data</button></main>;
   if (!data || data.requestedAddress !== address) return <main className="page shell"><div className="empty">Loading verified launch data...</div></main>;
   const launch = data.launch;
@@ -64,14 +72,19 @@ export function TokenPage({ address }: { address: string }) {
   const quoteDecimals = Number(market?.quote_decimals ?? 9);
   const tracked = launch.tracker_status === "active" && !market?.tracker_error && market?.history_complete === true;
   const funded = BigInt(String(funding?.available_atoms ?? 0)) + BigInt(String(funding?.reserved_atoms ?? 0)) + BigInt(String(funding?.submitted_atoms ?? 0)) > 0n;
-  const status = !tracked ? market?.tracker_error ? "TRACKER ACTION NEEDED" : "HISTORY CATCHING UP" : funded ? data.enginePaused ? "FUNDED · EPOCHS PAUSED" : "TOPBLAST FUNDED" : "TRACKING ACTIVE · NOT FUNDED";
+  const status = !tracked ? market?.tracker_error ? "TRACKER ACTION NEEDED" : "TOPBLAST ENABLED" : funded ? data.enginePaused ? "FUNDED · EPOCHS PAUSED" : "TOPBLAST FUNDED" : "TRACKING ACTIVE · NOT FUNDED";
+  const publicLinks = [
+    ["Website", launch.website_url],
+    ["X", launch.x_url],
+    ["Telegram", launch.telegram_url],
+  ].filter((item): item is [string, string] => typeof item[1] === "string" && item[1].startsWith("https://"));
   const eligible = (data.allocations as Array<Record<string, unknown>>).filter((item) => item.epoch_id === epochs[0]?.id).length;
   return <main>
-    <section className="token-hero"><div className="shell token-hero-grid"><div><span className="status-pill">{status}</span><h1>{String(launch.name)}<span>${String(launch.symbol)} · {String(launch.symbol)} / {String(launch.quote_symbol)}</span></h1><p className="mono">{address}</p></div>{Boolean(launch.image_url) && <Image unoptimized className="token-logo-large" width={120} height={120} src={String(launch.image_url)} alt={`${String(launch.name)} token`} />}</div></section>
+    <section className="token-hero"><div className="shell token-hero-grid"><div><span className="status-pill">{status}</span><h1>{String(launch.name)}<span>${String(launch.symbol)} · {String(launch.symbol)} / {String(launch.quote_symbol)}</span></h1><button type="button" className="token-ca" onClick={copyAddress} title={address}><span>CA</span><code>{address}</code><strong>{copied ? "COPIED" : "COPY"}</strong></button></div>{Boolean(launch.image_url) && <Image unoptimized className="token-logo-large" width={120} height={120} src={String(launch.image_url)} alt={`${String(launch.name)} token`} />}</div></section>
     <div className="shell page">
       <div className="token-toolbar"><VenueBadge venue={String(launch.venue)} /><span className="notice">{refreshing ? "Refreshing chain data..." : "Auto-refresh every 15 seconds"}</span><button className="button button-small button-secondary" type="button" disabled={refreshing} onClick={() => setRefreshKey(key => key + 1)}>Refresh</button></div>
       {launch.is_test === true && <p className="docs-callout"><strong>PRE-LAUNCH VERIFICATION TOKEN</strong> · Real mainnet activity. This verification listing is not proof that the complete funded reward lifecycle has passed.</p>}
-      <div className="token-actions"><a className="button" href={launch.venue === "pumpfun" ? `https://pump.fun/coin/${address}` : `https://www.stonkfun.xyz/token/${address}`} target="_blank" rel="noreferrer">Trade on {venueName}</a><Link className="button button-secondary" href={`/token/${address}/proof`}>View public proof</Link></div>
+      <section className="token-link-bar" aria-label="Token links"><span className="section-label">LINKS</span><div><a href={launch.venue === "pumpfun" ? `https://pump.fun/coin/${address}` : `https://www.stonkfun.xyz/token/${address}`} target="_blank" rel="noreferrer">Trade on {venueName} ↗</a>{publicLinks.map(([label, href]) => <a key={label} href={href} target="_blank" rel="noreferrer">{label} ↗</a>)}<a href={`https://solscan.io/token/${address}`} target="_blank" rel="noreferrer">Solscan ↗</a><Link href={`/token/${address}/proof`}>Public proof →</Link></div></section>
       {error && <p className="error">{error}</p>}
       <MarketOverview address={address} launch={launch} market={market} spot={data.marketData} prices={data.prices} trades={data.trades} tradesAvailable={data.tradesAvailable} tradesPartial={data.tradesPartial} trackedHolders={data.trackedHolders} />
       <div className="stats-grid"><div className="metric"><span>Available reward pool</span><strong>{atoms(funding?.available_atoms, quoteDecimals)} {rewardSymbol}</strong></div><div className="metric"><span>Eligible wallets</span><strong>{eligible}</strong></div><div className="metric"><span>Total paid</span><strong>{atoms(data.totalRewardedAtoms, quoteDecimals)} {rewardSymbol}</strong></div><div className="metric"><span>Next epoch</span><strong>{data.enginePaused ? "Paused" : tracked ? "Scheduled by worker" : "Tracker unavailable"}</strong></div></div>

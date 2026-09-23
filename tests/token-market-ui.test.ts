@@ -28,7 +28,7 @@ it("shows real amounts, filters trades and provides honest venue-directed buy/se
   expect(host.textContent).toContain("WTF / STONK");
   expect(host.textContent).not.toContain("Market account");
   expect(host.querySelector('a[href="https://solscan.io/tx/receipt"]')).not.toBeNull();
-  expect(host.textContent).toContain("reward eligibility remains gated");
+  expect(host.textContent).not.toContain("history is catching up");
   await act(async () => button("Sell").click());
   expect(host.textContent).toContain("Sell on StonkFun");
   expect(host.textContent).toContain("Trading is completed at the venue, not inside TopBlast");

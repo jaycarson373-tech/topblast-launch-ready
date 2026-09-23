@@ -66,8 +66,10 @@ async function runCycle() {
   const { data: markets, error: marketError } = await db.from("tracked_markets").select("*").eq("active", true);
   if (marketError) throw marketError;
   for (const market of markets ?? []) {
+    let historyReady = false;
     try {
-      if (await reconcileMarket(db, market, owner) === false) needsBackfill = true;
+      historyReady = await reconcileMarket(db, market, owner) === true;
+      if (!historyReady) needsBackfill = true;
     }
     catch (error) {
       const message = error instanceof Error ? error.message : "market reconciliation failed";
@@ -76,10 +78,12 @@ async function runCycle() {
     }
     // A venue listing can lag a real onchain launch. Missing optional USD
     // metrics must not mark a successfully reconciled tracker as failed.
-    try {
-      const venueMarket = await launchVenue(market.venue).getMarketData(market.base_mint, market.market_address);
-      await db.from("launches").update({ price_usd: venueMarket.priceUsd, market_cap_usd: venueMarket.marketCapUsd, volume_24h_usd: venueMarket.volume24hUsd, liquidity_usd: venueMarket.liquidityUsd, updated_at: new Date().toISOString() }).eq("id", market.launch_id);
-    } catch (error) { process.stderr.write(`${market.launch_id}: optional venue metrics unavailable: ${error instanceof Error ? error.message : "unknown error"}\n`); }
+    if (historyReady) {
+      try {
+        const venueMarket = await launchVenue(market.venue).getMarketData(market.base_mint, market.market_address);
+        await db.from("launches").update({ price_usd: venueMarket.priceUsd, market_cap_usd: venueMarket.marketCapUsd, volume_24h_usd: venueMarket.volume24hUsd, liquidity_usd: venueMarket.liquidityUsd, updated_at: new Date().toISOString() }).eq("id", market.launch_id);
+      } catch (error) { process.stderr.write(`${market.launch_id}: optional venue metrics unavailable: ${error instanceof Error ? error.message : "unknown error"}\n`); }
+    }
     if (market.venue === "stonkfun") {
       try {
         const result = await reconcileStonkForwardedFees(db, market);

@@ -6,15 +6,15 @@ import { paymentSignatureFromTransaction } from "@/lib/solana/transaction-signat
 import { getWallets } from "@wallet-standard/app";
 import { VenueBadge } from "@/components/venue-badge";
 import Image from "next/image";
-import { initialCreatorShare, updateCreatorShare, creatorShareToAllocation, CREATOR_SHARE_STEP, CREATOR_REWARD_PERCENT, EPOCH_RELEASE_PERCENT, FIXED_PROTOCOL_PERCENT } from "@/lib/launch-allocation";
+import { initialCreatorShare, updateCreatorShare, creatorShareToAllocation, CREATOR_SHARE_STEP, EPOCH_RELEASE_PERCENT, FIXED_PROTOCOL_PERCENT } from "@/lib/launch-allocation";
 import { validateTokenImage } from "@/lib/token-image";
 import { clientJson } from "@/lib/client-json";
+import { PairPicker, type PairOption } from "@/components/pair-picker";
 
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const STONK_DEFAULT_QUOTE_MINT = process.env.NEXT_PUBLIC_STONK_QUOTE_MINT ?? SOL_MINT;
-interface VenuePair { mint: string; symbol: string; name: string; decimals: number; launchable: boolean; launchLabReady?: boolean }
-const STONK_PAIR: VenuePair = { mint: STONK_DEFAULT_QUOTE_MINT, symbol: STONK_DEFAULT_QUOTE_MINT === SOL_MINT ? "SOL" : "STONK", name: STONK_DEFAULT_QUOTE_MINT === SOL_MINT ? "Solana" : "STONK", decimals: 9, launchable: true, launchLabReady: true };
-const PUMP_SOL_PAIR: VenuePair = { mint: SOL_MINT, symbol: "SOL", name: "Solana", decimals: 9, launchable: true };
+const STONK_PAIR: PairOption = { mint: STONK_DEFAULT_QUOTE_MINT, symbol: STONK_DEFAULT_QUOTE_MINT === SOL_MINT ? "SOL" : "STONK", name: STONK_DEFAULT_QUOTE_MINT === SOL_MINT ? "Solana" : "STONK", decimals: 9, launchable: true, launchLabReady: true };
+const PUMP_SOL_PAIR: PairOption = { mint: SOL_MINT, symbol: "SOL", name: "Solana", decimals: 9, launchable: true };
 
 interface WalletAccountLike { address: string; chains: readonly string[] }
 interface WalletLike {
@@ -80,9 +80,9 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
   const [error, setError] = useState("");
   const [result, setResult] = useState<Record<string, string> | null>(null);
   const [runtime, setRuntime] = useState<{ ready: boolean; missing: string[]; stonkBlockers?: string[]; pumpReady: boolean; pumpBlockers: string[] } | null>(null);
-  const [stonkPairs, setStonkPairs] = useState<VenuePair[]>([STONK_PAIR]);
+  const [stonkPairs, setStonkPairs] = useState<PairOption[]>([STONK_PAIR]);
   const [stonkPairMint, setStonkPairMint] = useState(STONK_DEFAULT_QUOTE_MINT);
-  const [pumpPairs, setPumpPairs] = useState<VenuePair[]>([PUMP_SOL_PAIR]);
+  const [pumpPairs, setPumpPairs] = useState<PairOption[]>([PUMP_SOL_PAIR]);
   const [pumpPairMint, setPumpPairMint] = useState(SOL_MINT);
   const [pairError, setPairError] = useState("");
   const venueReady = Boolean(venue === "stonkfun" ? runtime?.ready : runtime?.pumpReady);
@@ -106,8 +106,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
     clientJson("/api/venues/stonkfun/pairs", { cache: "no-store" }, 20_000, "StonkFun pair list timed out")
       .then(({ response, body }) => {
         if (!response.ok || !Array.isArray(body.pairs)) throw new Error(body.error ?? "StonkFun pair list is unavailable");
-        const pairs = (body.pairs as VenuePair[]).filter((pair) => pair.launchable && pair.launchLabReady !== false)
-          .sort((a, b) => (a.symbol === "STONK" ? -1 : b.symbol === "STONK" ? 1 : a.symbol.localeCompare(b.symbol)));
+        const pairs = (body.pairs as PairOption[]).filter((pair) => pair.launchable && pair.launchLabReady !== false);
         if (!pairs.length) throw new Error("StonkFun returned no launchable pairs");
         setStonkPairs(pairs);
         setStonkPairMint((current) => pairs.some((pair) => pair.mint === current) ? current : pairs[0].mint);
@@ -120,7 +119,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
     clientJson("/api/venues/pumpfun/pairs", { cache: "no-store" }, 20_000, "Pump.fun pair list timed out")
       .then(({ response, body }) => {
         if (!response.ok || !Array.isArray(body.pairs)) throw new Error(body.error ?? "Pump.fun pair list is unavailable");
-        const pairs = (body.pairs as VenuePair[]).filter((pair) => pair.launchable);
+        const pairs = (body.pairs as PairOption[]).filter((pair) => pair.launchable);
         if (!pairs.length) throw new Error("Pump.fun returned no supported pairs");
         setPumpPairs(pairs);
         setPumpPairMint((current) => pairs.some((pair) => pair.mint === current) ? current : pairs[0].mint);
@@ -334,23 +333,19 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
       </div>
       <div className="form-section">
         <div className="section-label">Pair</div>
-        {venue === "stonkfun" ? <><label className="sr-only" htmlFor="stonk-pair">StonkFun quote pair</label><select id="stonk-pair" className="pair-select" value={stonkPairMint} onChange={(event) => setStonkPairMint(event.target.value)}>{stonkPairs.map((pair) => <option key={pair.mint} value={pair.mint}>{pair.symbol} · {pair.name}</option>)}</select><p className="notice">{stonkPairs.length} live StonkFun pairs available. Reward payouts use the selected quote asset.</p>{pairError && <p className="error">{pairError}. SOL remains available while the catalog reconnects.</p>}<p className="notice mono">{stonkPair.mint}</p></> : <><label className="sr-only" htmlFor="pump-pair">Pump.fun quote pair</label><select id="pump-pair" className="pair-select" value={pumpPairMint} onChange={(event) => setPumpPairMint(event.target.value)}>{pumpPairs.map((pair) => <option key={pair.mint} value={pair.mint}>{pair.symbol} · {pair.name}</option>)}</select><p className="notice">{pumpPairs.length} official Pump.fun pairs available. The selected quote asset funds rewards.</p><p className="notice mono">{pumpPair.mint}</p></>}
+        {venue === "stonkfun" ? <><PairPicker id="stonk-pair" label="StonkFun quote pair" venue="stonkfun" pairs={stonkPairs} value={stonkPairMint} onChange={setStonkPairMint} /><p className="notice">{stonkPairs.length} live StonkFun pairs. Search by ticker, name, or mint address. Rewards use the selected quote asset.</p>{pairError && <p className="error">{pairError}. SOL remains available while the catalog reconnects.</p>}</> : <><PairPicker id="pump-pair" label="Pump.fun quote pair" venue="pumpfun" pairs={pumpPairs} value={pumpPairMint} onChange={setPumpPairMint} /><p className="notice">{pumpPairs.length} official Pump.fun pairs. Search by ticker, name, or mint address. Rewards use the selected quote asset.</p></>}
       </div>
       <div className="form-section">
         <div className="section-label">TopBlast rewards</div>
         <h3>Fund the blast zone.</h3>
         <p className="notice">When eligible holders fall below their verified average entry, they share the funded TopBlast reward pool. Stonk launches route creator fees to the TopBlast treasury, where the worker verifies the exact pool receipt and enforces this launch’s fixed allocation automatically. Pump remains beta until its creator-wide vault can be attributed safely per launch.</p>
-        <p className="notice"><strong>Split 100% of your share.</strong> These controls divide your {CREATOR_REWARD_PERCENT}% share, not the gross funding amount.</p>
-        <div className="allocation-grid allocation-grid-two">
-          {(["topblastPercent", "creatorPercent"] as const).map((key) => (
-            <label className="allocation" key={key}>
-              <span className="section-label">{key === "topblastPercent" ? "TopBlast rewards" : "Creator"}</span>
-              <output className="allocation-percent">{creatorShare[key]}%</output>
-              <input aria-label={key === "topblastPercent" ? "Adjust TopBlast rewards" : "Adjust creator share"} aria-valuetext={`${creatorShare[key]}% of your share`} type="range" min="0" max="100" step={CREATOR_SHARE_STEP} value={creatorShare[key]} onChange={(event) => setCreatorShare(updateCreatorShare(key, Number(event.target.value)))} />
-            </label>
-          ))}
-        </div>
-        <p className="notice">Your share total: {creatorShare.topblastPercent + creatorShare.creatorPercent}%. Adjust in {CREATOR_SHARE_STEP}-point steps. Protocol receives a fixed {FIXED_PROTOCOL_PERCENT}% of gross funding before your share is split. It is designated for TOPBLAST buybacks and burns, with completed actions published onchain. <a href="/docs#funding">How funding works</a>.</p>
+        <p className="notice"><strong>Choose where your distributable fees go.</strong> Holder rewards and Creator always add to 100%.</p>
+        <label className="fee-share-control">
+          <span className="fee-share-values"><strong><small>Holder rewards</small>{creatorShare.topblastPercent}%</strong><strong><small>Creator</small>{creatorShare.creatorPercent}%</strong></span>
+          <input aria-label="Adjust holder rewards fee share" aria-valuetext={`${creatorShare.topblastPercent}% holder rewards and ${creatorShare.creatorPercent}% creator`} type="range" min="0" max="100" step={CREATOR_SHARE_STEP} value={creatorShare.topblastPercent} onChange={(event) => setCreatorShare(updateCreatorShare("topblastPercent", Number(event.target.value)))} />
+          <span className="fee-share-scale"><span>More to creator</span><span>More to holders</span></span>
+        </label>
+        <p className="notice">TopBlast’s fixed {FIXED_PROTOCOL_PERCENT}% protocol share is applied automatically for TOPBLAST buybacks and burns. You only choose the split shown above. Completed buybacks and burns require public onchain proof. <a href="/docs#funding">How funding works</a>.</p>
         <p className="notice"><strong>Carry-forward policy:</strong> each epoch can reserve {EPOCH_RELEASE_PERCENT}% of the currently available holder-reward balance. The remaining {100 - EPOCH_RELEASE_PERCENT}% stays isolated in this launch for later epochs.</p>
       </div>
       </fieldset>
@@ -361,8 +356,8 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
           {testMode && <p className="notice"><strong>PRE-LAUNCH VERIFICATION · {publicTestListing ? "PUBLICLY LISTED" : "HIDDEN FROM PUBLIC TOPBLAST PAGES"}</strong><br />This is a real Solana mainnet transaction, not a simulation-only launch.</p>}
           <h3>{prepared.review.name} · ${prepared.review.symbol}</h3>
           <Image src={prepared.logo} alt="Token image included in this launch" width={96} height={96} className="review-token-image" unoptimized />
-          <p className="notice">Venue: {prepared.review.venue === "pumpfun" ? "Pump.fun" : "StonkFun"}. Pair: {prepared.review.symbol} / {prepared.review.quoteSymbol}. Your share: {prepared.review.creatorShare.topblastPercent}% rewards / {prepared.review.creatorShare.creatorPercent}% creator.</p>
-          <p className="notice">Overall funding allocation: {prepared.review.allocation.topblastPercent}% rewards, {prepared.review.allocation.creatorPercent}% creator retained, {prepared.review.allocation.protocolPercent}% protocol treasury designated for TOPBLAST buybacks and burns. Your two controls divide the remaining {CREATOR_REWARD_PERCENT}%, not 100% of gross funding. Treasury allocation is not presented as burned until a confirmed burn transaction is published.</p>
+          <p className="notice">Venue: {prepared.review.venue === "pumpfun" ? "Pump.fun" : "StonkFun"}. Pair: {prepared.review.symbol} / {prepared.review.quoteSymbol}. Selected split: {prepared.review.creatorShare.topblastPercent}% rewards / {prepared.review.creatorShare.creatorPercent}% creator.</p>
+          <p className="notice">Your selected fee split: <strong>{prepared.review.creatorShare.topblastPercent}% holder rewards / {prepared.review.creatorShare.creatorPercent}% creator.</strong> TopBlast automatically accounts for its fixed {prepared.review.allocation.protocolPercent}% protocol share for buybacks and burns. Internally this produces {prepared.review.allocation.topblastPercent}% rewards and {prepared.review.allocation.creatorPercent}% creator funding from each verified gross receipt. Nothing is shown as burned until its transaction is confirmed.</p>
           <p className="notice">Epoch release: {EPOCH_RELEASE_PERCENT}% of the available holder-reward balance is reserved for each eligible epoch. {100 - EPOCH_RELEASE_PERCENT}% carries forward inside this launch. No funded balance means no payout.</p>
           <p className="notice">Reward asset: {prepared.review.quoteSymbol}. Reward treasury: <span className="mono">{prepared.rewardTreasury ?? "Unavailable. Do not approve until verified."}</span>. Protocol treasury: <span className="mono">{prepared.protocolTreasury ?? "Unavailable. Do not approve until verified."}</span>.</p>
           <p className="notice"><strong>Permanent configuration:</strong> allocation and token metadata are fixed at launch. {prepared.review.venue === "stonkfun" ? "The onchain creator-fee recipient is the TopBlast treasury. Only finalized fee forwards matching this exact pool can fund its rewards; the worker sends the creator share and eligible-holder airdrops." : "Pump is beta. Creator fees use a creator-wide vault and are not credited until safely attributed per launch. No initial buy, native cashback, mayhem, or PumpSwap graduation support. Only the reviewed official quote pair is accepted."}</p>
