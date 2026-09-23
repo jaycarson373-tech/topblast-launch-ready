@@ -10,10 +10,10 @@ import { initialCreatorShare, updateCreatorShare, creatorShareToAllocation, CREA
 import { validateTokenImage } from "@/lib/token-image";
 import { clientJson } from "@/lib/client-json";
 
-const STONK_MINT = process.env.NEXT_PUBLIC_STONK_QUOTE_MINT ?? "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
+const STONK_DEFAULT_QUOTE_MINT = process.env.NEXT_PUBLIC_STONK_QUOTE_MINT ?? SOL_MINT;
 interface VenuePair { mint: string; symbol: string; name: string; decimals: number; launchable: boolean; launchLabReady?: boolean }
-const STONK_PAIR: VenuePair = { mint: STONK_MINT, symbol: "STONK", name: "STONK", decimals: 9, launchable: true, launchLabReady: true };
+const STONK_PAIR: VenuePair = { mint: STONK_DEFAULT_QUOTE_MINT, symbol: STONK_DEFAULT_QUOTE_MINT === SOL_MINT ? "SOL" : "STONK", name: STONK_DEFAULT_QUOTE_MINT === SOL_MINT ? "Solana" : "STONK", decimals: 9, launchable: true, launchLabReady: true };
 const PUMP_SOL_PAIR: VenuePair = { mint: SOL_MINT, symbol: "SOL", name: "Solana", decimals: 9, launchable: true };
 
 interface WalletAccountLike { address: string; chains: readonly string[] }
@@ -81,7 +81,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
   const [result, setResult] = useState<Record<string, string> | null>(null);
   const [runtime, setRuntime] = useState<{ ready: boolean; missing: string[]; stonkBlockers?: string[]; pumpReady: boolean; pumpBlockers: string[] } | null>(null);
   const [stonkPairs, setStonkPairs] = useState<VenuePair[]>([STONK_PAIR]);
-  const [stonkPairMint, setStonkPairMint] = useState(STONK_MINT);
+  const [stonkPairMint, setStonkPairMint] = useState(STONK_DEFAULT_QUOTE_MINT);
   const [pumpPairs, setPumpPairs] = useState<VenuePair[]>([PUMP_SOL_PAIR]);
   const [pumpPairMint, setPumpPairMint] = useState(SOL_MINT);
   const [pairError, setPairError] = useState("");
@@ -308,11 +308,11 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
 
   return (
     <form className={`panel launch-form venue-theme-${venue}`} onInvalid={explainInvalidField} onSubmit={(event) => { event.preventDefault(); void prepare(new FormData(event.currentTarget)); }}>
-      {receipt && <section className="panel launch-recovery" aria-label="Recover your previous launch" aria-busy={checkingStatus}>
+      {receipt && !result && <section className="panel launch-recovery" aria-label="Recover your previous launch" aria-busy={checkingStatus}>
         <div className="section-label">Previous launch receipt</div>
         <h3>{failure ? "Launch did not complete" : result ? "Token launched. Tracking recovery pending" : "Checking your previous launch"}</h3>
         <p className="notice">{failure?.message ?? "The token form is locked to prevent a duplicate payment. Recover your previous launch here first. No wallet connection is needed to check it."}</p>
-        <div className="recovery-actions"><button type="button" className="button" disabled={checkingStatus} onClick={() => void checkStatus()}>{checkingStatus ? "Checking saved receipt..." : "Check launch status"}</button>{failure?.retrySafe && <button type="button" className="button button-secondary" disabled={busy || checkingStatus} onClick={startFreshReview}>Save receipt and start a fresh review</button>}</div>
+        <div className="recovery-actions"><button type="button" className="button" disabled={checkingStatus} onClick={() => void checkStatus()}>{checkingStatus ? "Verifying launch receipt..." : "Refresh launch receipt"}</button>{failure?.retrySafe && <button type="button" className="button button-secondary" disabled={busy || checkingStatus} onClick={startFreshReview}>Save receipt and start a fresh review</button>}</div>
         {checkingStatus && <p className="notice" role="status">Checking may take up to 20 seconds. Your wallet will not open.</p>}
         <details><summary>View saved receipt</summary><p className="mono">Launch: {receipt.launchId}<br />Transaction: <a href={`https://solscan.io/tx/${encodeURIComponent(receipt.paymentSignature)}`} target="_blank" rel="noreferrer">{receipt.paymentSignature}</a></p></details>
       </section>}
@@ -334,7 +334,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
       </div>
       <div className="form-section">
         <div className="section-label">Pair</div>
-        {venue === "stonkfun" ? <><label className="sr-only" htmlFor="stonk-pair">StonkFun quote pair</label><select id="stonk-pair" className="pair-select" value={stonkPairMint} onChange={(event) => setStonkPairMint(event.target.value)}>{stonkPairs.map((pair) => <option key={pair.mint} value={pair.mint}>{pair.symbol} · {pair.name}</option>)}</select><p className="notice">{stonkPairs.length} live StonkFun pairs available. Reward payouts use the selected quote asset.</p>{pairError && <p className="error">{pairError}. STONK remains available while the catalog reconnects.</p>}<p className="notice mono">{stonkPair.mint}</p></> : <><label className="sr-only" htmlFor="pump-pair">Pump.fun quote pair</label><select id="pump-pair" className="pair-select" value={pumpPairMint} onChange={(event) => setPumpPairMint(event.target.value)}>{pumpPairs.map((pair) => <option key={pair.mint} value={pair.mint}>{pair.symbol} · {pair.name}</option>)}</select><p className="notice">{pumpPairs.length} official Pump.fun pairs available. The selected quote asset funds rewards.</p><p className="notice mono">{pumpPair.mint}</p></>}
+        {venue === "stonkfun" ? <><label className="sr-only" htmlFor="stonk-pair">StonkFun quote pair</label><select id="stonk-pair" className="pair-select" value={stonkPairMint} onChange={(event) => setStonkPairMint(event.target.value)}>{stonkPairs.map((pair) => <option key={pair.mint} value={pair.mint}>{pair.symbol} · {pair.name}</option>)}</select><p className="notice">{stonkPairs.length} live StonkFun pairs available. Reward payouts use the selected quote asset.</p>{pairError && <p className="error">{pairError}. SOL remains available while the catalog reconnects.</p>}<p className="notice mono">{stonkPair.mint}</p></> : <><label className="sr-only" htmlFor="pump-pair">Pump.fun quote pair</label><select id="pump-pair" className="pair-select" value={pumpPairMint} onChange={(event) => setPumpPairMint(event.target.value)}>{pumpPairs.map((pair) => <option key={pair.mint} value={pair.mint}>{pair.symbol} · {pair.name}</option>)}</select><p className="notice">{pumpPairs.length} official Pump.fun pairs available. The selected quote asset funds rewards.</p><p className="notice mono">{pumpPair.mint}</p></>}
       </div>
       <div className="form-section">
         <div className="section-label">TopBlast rewards</div>
@@ -374,7 +374,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
           <button type="button" className="button" disabled={busy || Boolean(prepared.expiresAt && new Date(prepared.expiresAt).getTime() <= now)} onClick={signAndSubmit}>Confirm in wallet</button> <button type="button" className="button button-secondary" disabled={busy} onClick={() => setPrepared(null)}>Edit / refresh review</button>
         </div>
       )}
-      {result && <div className={result.trackerStatus === "active" ? "success" : "error"}><strong>{result.trackerStatus === "active" ? "Launch complete. TopBlast tracking active." : "Token launched. Tracker registration needs recovery."}</strong><br />Mint: {result.mint}<br />Pool: {result.pool}<br />Signature: {result.signature}<br /><a href="/creator">Open creator dashboard</a>{result.mint && (!testMode || publicTestListing) && <> · <a href={`/token/${result.mint}`}>Open token page</a></>}{result.trackerStatus !== "active" && <><br />Use the saved transaction status recovery to retry tracking. No second transaction is required.</>}</div>}
+      {result && <section className="success" aria-live="polite"><div className="section-label">LAUNCHED</div><h3>{result.trackerStatus === "active" ? "Your TopBlast page is live." : "Your token is live. TopBlast is activating."}</h3><p className="notice">Mint: <span className="mono">{result.mint}</span><br />Market: <span className="mono">{result.pool}</span><br />Transaction: <a href={`https://solscan.io/tx/${encodeURIComponent(result.signature)}`} target="_blank" rel="noreferrer">View on Solscan ↗</a></p><div className="hero-actions">{result.mint && (!testMode || publicTestListing) && <a className="button" href={`/token/${result.mint}`}>View token on TopBlast</a>}<a className="button button-secondary" href="/creator">Open creator dashboard</a></div>{result.trackerStatus !== "active" && <p className="notice">The venue launch is confirmed. TopBlast is retrying market registration automatically. No second payment is needed.</p>}{testMode && !publicTestListing && <p className="notice">This controlled launch is hidden from public TopBlast pages. Its creator record and onchain transaction remain available.</p>}</section>}
       <div className="form-footer">
         <p className="notice">Your wallet signs the reviewed launch transaction. TopBlast never receives your private key.</p>
         {!prepared && !receipt && !result && (wallet

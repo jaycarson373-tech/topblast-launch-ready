@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ColorType, createChart, LineSeries, type IChartApi, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
 import { chartPoints } from "@/lib/chart-points";
 
-export function PriceChart({ points, decimals, quoteSymbol = "STONK" }: { quoteSymbol?: string; points: Array<{ block_time: string; price_quote_atoms_per_token: string }>; decimals: number }) {
+export function PriceChart({ points, decimals, baseSymbol = "TOKEN", quoteSymbol = "STONK" }: { baseSymbol?: string; quoteSymbol?: string; points: Array<{ block_time: string; price_quote_atoms_per_token: string }>; decimals: number }) {
   const host = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -48,5 +48,5 @@ export function PriceChart({ points, decimals, quoteSymbol = "STONK" }: { quoteS
     chartRef.current.timeScale().setVisibleRange({ from: (to - seconds) as UTCTimestamp, to });
   }
   if (!hasPoints) return <div className="chart-empty">Price history becomes available after the finalized tracker records the market.</div>;
-  return <section className="chart-panel" aria-label={`Finalized ${quoteSymbol} price chart`}><div className="chart-head"><div><div className="section-label">Finalized market price</div><h3>Token / {quoteSymbol}</h3></div><div className="chart-ranges" aria-label="Chart timeframes">{["1H", "1D", "7D", "ALL"].map((item) => <button type="button" className={range === item ? "active" : ""} key={item} onClick={() => applyRange(item)}>{item}</button>)}</div></div><div ref={host} className="chart-host" onPointerDown={() => { userMoved.current = true; }} onWheel={() => { userMoved.current = true; }} /><p className="notice">Drag to pan. Scroll or pinch to zoom. Data comes from finalized, verified venue account observations.</p></section>;
+  return <section className="chart-panel" aria-label={`Finalized ${baseSymbol} / ${quoteSymbol} price chart`}><div className="chart-head"><div><div className="section-label">Finalized market price</div><h3>{baseSymbol} / {quoteSymbol}</h3></div><div className="chart-ranges" aria-label="Chart timeframes">{["1H", "1D", "7D", "ALL"].map((item) => <button type="button" className={range === item ? "active" : ""} key={item} onClick={() => applyRange(item)}>{item}</button>)}</div></div><div ref={host} className="chart-host" onPointerDown={() => { userMoved.current = true; }} onWheel={() => { userMoved.current = true; }} /><p className="notice">Drag to pan. Scroll or pinch to zoom. Data comes from finalized, verified venue account observations.</p></section>;
 }

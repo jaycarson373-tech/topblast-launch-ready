@@ -47,9 +47,9 @@ describe("saved receipt recovery clicks, isolated DOM with no browser or wallet"
   it("a hanging status request times out and leaves check-status usable without unlocking another payment", async () => {
     fetchMock.mockImplementation(async (url: string) => url === "/api/health" ? health() : new Promise(() => {}));
     await render();
-    expect(button("Checking saved receipt").disabled).toBe(true);
+    expect(button("Verifying launch receipt").disabled).toBe(true);
     await act(async () => { await vi.advanceTimersByTimeAsync(20_001); });
-    expect(button("Check launch status").disabled).toBe(false);
+    expect(button("Refresh launch receipt").disabled).toBe(false);
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("timed out");
     expect(fields().disabled).toBe(true);
     expect(localStorage.getItem(key)).not.toBeNull();
@@ -58,14 +58,14 @@ describe("saved receipt recovery clicks, isolated DOM with no browser or wallet"
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
     expect(fetchMock).toHaveBeenCalledTimes(calls);
     fetchMock.mockResolvedValue(Response.json(failed));
-    await act(async () => button("Check launch status").click());
+    await act(async () => button("Refresh launch receipt").click());
     expect(button("Save receipt and start a fresh review").disabled).toBe(false);
   });
   it("never enables a fresh review for an uncertain or still processing transaction", async () => {
     fetchMock.mockImplementation(async (url: string) => url === "/api/health" ? health() : Response.json({ status: "processing" }));
     await render();
     expect(fields().disabled).toBe(true);
-    expect(button("Check launch status").disabled).toBe(false);
+    expect(button("Refresh launch receipt").disabled).toBe(false);
     expect(button("Save receipt")).toBeUndefined();
     expect(localStorage.getItem(key)).not.toBeNull();
   });
@@ -77,5 +77,14 @@ describe("saved receipt recovery clicks, isolated DOM with no browser or wallet"
     expect(localStorage.getItem(key)).not.toBeNull();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Could not save");
     write.mockRestore();
+  });
+  it("shows a launched confirmation and direct TopBlast token link after completion", async () => {
+    fetchMock.mockImplementation(async (url: string) => url === "/api/health" ? health() : Response.json({ status: "completed", mint: "mint-live", pool: "market-live", signature: "launch-signature", trackerStatus: "active" }));
+    await render();
+    expect(container.textContent).toContain("LAUNCHED");
+    expect(container.textContent).toContain("Your TopBlast page is live.");
+    expect(container.querySelector('a[href="/token/mint-live"]')?.textContent).toBe("View token on TopBlast");
+    expect(button("Refresh launch receipt")).toBeUndefined();
+    expect(localStorage.getItem(key)).toBeNull();
   });
 });

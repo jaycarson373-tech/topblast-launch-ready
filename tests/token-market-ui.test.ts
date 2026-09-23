@@ -25,6 +25,8 @@ it("shows real amounts, filters trades and provides honest venue-directed buy/se
   })));
   expect(host.textContent).toContain("0.000010307 STONK");
   expect(host.querySelector('a[href="https://www.stonkfun.xyz/token/mint"]')?.textContent).toContain("Buy on StonkFun");
+  expect(host.textContent).toContain("WTF / STONK");
+  expect(host.textContent).not.toContain("Market account");
   expect(host.querySelector('a[href="https://solscan.io/tx/receipt"]')).not.toBeNull();
   expect(host.textContent).toContain("reward eligibility remains gated");
   await act(async () => button("Sell").click());
