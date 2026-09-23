@@ -43,7 +43,8 @@ export async function reconcileMarket(db: SupabaseClient, row: MarketRow, owner:
     const produced = await solanaRpc<number[]>("getBlocks", [cursor + 1, end, { commitment: "finalized" }]);
     // Fetch a small bounded window in parallel, but apply/checkpoint strictly in
     // chain order. Slow HTTP reads must not make backfill slower than the chain.
-    const width = 4;
+    const requestedWidth = Number(process.env.INDEX_BLOCK_FETCH_CONCURRENCY ?? 12);
+    const width = Number.isInteger(requestedWidth) && requestedWidth > 0 ? Math.min(24, requestedWidth) : 12;
     scan: for (let offset = 0; offset < produced.length; offset += width) {
       const slots = produced.slice(offset, offset + width);
       const blocks = await Promise.allSettled(slots.map(slot => solanaRpc<{ blockhash: string; previousBlockhash: string; blockTime: number | null; transactions: FinalizedBlockTransaction[] } | null>("getBlock", [slot, { commitment: "finalized", encoding: "jsonParsed", transactionDetails: "full", rewards: false, maxSupportedTransactionVersion: 1 }])));
