@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type InvalidEvent } from "react";
 import { Keypair, Transaction } from "@solana/web3.js";
 import { paymentSignatureFromTransaction } from "@/lib/solana/transaction-signature";
 import { getWallets } from "@wallet-standard/app";
@@ -226,6 +226,12 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
     finally { setBusy(false); }
   }
 
+  function explainInvalidField(event: InvalidEvent<HTMLFormElement>) {
+    const target = event.target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+    const label = target.labels?.[0]?.textContent?.trim() || target.name || "required field";
+    setError(`Complete ${label} before reviewing the launch.`);
+  }
+
   function complete(body: LaunchStatus) {
     if (body.status === "failed") {
       setFailure({ message: body.failureMessage ?? "Launch failed. Check status to verify the saved transaction before trying again.", retrySafe: body.retrySafe === true });
@@ -301,7 +307,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
   const walletPicker = !wallet && <div className="wallet-picker" aria-label="Choose a wallet">{wallets.length ? wallets.map((item) => <button key={item.name} className="wallet-choice" type="button" disabled={busy} onClick={() => void connect(item.name).catch((caught) => setError(caught instanceof Error ? caught.message : "Wallet connection failed"))}>Connect {item.name}</button>) : <span className="notice">Install a Solana wallet to continue.</span>}</div>;
 
   return (
-    <form className={`panel launch-form venue-theme-${venue}`} onSubmit={(event) => { event.preventDefault(); void prepare(new FormData(event.currentTarget)); }}>
+    <form className={`panel launch-form venue-theme-${venue}`} onInvalid={explainInvalidField} onSubmit={(event) => { event.preventDefault(); void prepare(new FormData(event.currentTarget)); }}>
       {receipt && <section className="panel launch-recovery" aria-label="Recover your previous launch" aria-busy={checkingStatus}>
         <div className="section-label">Previous launch receipt</div>
         <h3>{failure ? "Launch did not complete" : result ? "Token launched. Tracking recovery pending" : "Checking your previous launch"}</h3>
@@ -369,7 +375,9 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
       {result && <div className={result.trackerStatus === "active" ? "success" : "error"}><strong>{result.trackerStatus === "active" ? "Launch complete. TopBlast tracking active." : "Token launched. Tracker registration needs recovery."}</strong><br />Mint: {result.mint}<br />Pool: {result.pool}<br />Signature: {result.signature}<br /><a href="/creator">Open creator dashboard</a>{result.mint && (!testMode || publicTestListing) && <> · <a href={`/token/${result.mint}`}>Open token page</a></>}{result.trackerStatus !== "active" && <><br />Use the saved transaction status recovery to retry tracking. No second transaction is required.</>}</div>}
       <div className="form-footer">
         <p className="notice">Your wallet signs the reviewed launch transaction. TopBlast never receives your private key.</p>
-        {!prepared && !receipt && !result && <button className="button venue-button" disabled={busy || imageLoading || total !== 100 || !venueReady}>{busy ? "Preparing..." : !runtime ? "Checking availability..." : !venueReady ? "Temporarily unavailable" : wallet ? venue === "pumpfun" ? "Launch on Pump.fun" : "Launch on STONK" : "Connect and launch"}</button>}
+        {!prepared && !receipt && !result && (wallet
+          ? <button type="submit" className="button venue-button" disabled={busy || imageLoading || total !== 100 || !venueReady}>{busy ? "Preparing review..." : !runtime ? "Checking availability..." : !venueReady ? "Temporarily unavailable" : venue === "pumpfun" ? "Review Pump.fun launch" : "Review StonkFun launch"}</button>
+          : <button type="button" className="button venue-button" disabled={busy || !venueReady} onClick={() => void connect().catch((caught) => setError(caught instanceof Error ? caught.message : "Wallet connection failed"))}>{busy ? "Connecting..." : !runtime ? "Checking availability..." : !venueReady ? "Temporarily unavailable" : "Connect wallet"}</button>)}
       </div>
       {!testMode && walletPicker}
       {wallet && <p className="notice">Connected: {walletName} · <span className="mono">{wallet.address}</span></p>}
