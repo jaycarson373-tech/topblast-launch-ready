@@ -2,7 +2,7 @@ import type { PositionStatus, RewardSnapshotPosition, WalletPosition } from "@/l
 
 export type PositionEvent =
   | { kind: "verified_buy"; launchId: string; wallet: string; tokenRaw: bigint; quoteAtoms: bigint; slot: bigint }
-  | { kind: "sell"; launchId: string; wallet: string; tokenRaw: bigint; slot: bigint }
+  | { kind: "sell"; launchId: string; wallet: string; tokenRaw: bigint; quoteAtoms?: bigint; slot: bigint }
   | { kind: "incoming_transfer"; launchId: string; wallet: string; tokenRaw: bigint; slot: bigint }
   | { kind: "outgoing_transfer"; launchId: string; wallet: string; tokenRaw: bigint; slot: bigint };
 

@@ -76,12 +76,18 @@ export function decodeFinalizedLaunchLabTransaction(tx: FinalizedBlockTransactio
     const sourceAddress = String(info.source ?? ""), destinationAddress = String(info.destination ?? "");
     const source = balances.get(sourceAddress), destination = balances.get(destinationAddress);
     if (!source && !destination) return;
-    const mint = source?.mint ?? destination?.mint;
+    const instructionMint = typeof info.mint === "string" ? info.mint : null;
+    const mint = source?.mint ?? destination?.mint ?? instructionMint;
     if (mint !== market.baseMint && mint !== market.quoteMint) return;
-    if (!source || !destination || source.mint !== destination.mint || source.program !== destination.program) throw new Error("Tracked transfer ownership is incomplete");
+    if (instructionMint && instructionMint !== mint) throw new Error("Tracked transfer mint identity changed");
+    const ephemeralQuoteSource = !source && Boolean(active && active.side === "buy" && sourceAddress === active.input && mint === market.quoteMint && instruction.programId === market.quoteTokenProgram);
+    const ephemeralQuoteDestination = !destination && Boolean(active && active.side === "sell" && destinationAddress === active.output && mint === market.quoteMint && instruction.programId === market.quoteTokenProgram);
+    if ((!source && !ephemeralQuoteSource) || (!destination && !ephemeralQuoteDestination)) throw new Error("Tracked transfer ownership is incomplete");
+    if (source && destination && (source.mint !== destination.mint || source.program !== destination.program)) throw new Error("Tracked transfer ownership is incomplete");
+    if ((source?.program ?? destination?.program) !== instruction.programId) throw new Error("Tracked transfer token program mismatch");
     const rawAmount = info.amount ?? (info.tokenAmount as { amount?: unknown } | undefined)?.amount;
     if (typeof rawAmount !== "string" || !/^\d+$/.test(rawAmount) || BigInt(rawAmount) <= 0n) throw new Error("Tracked transfer amount is not exact");
-    const transfer: Transfer = { source: sourceAddress, destination: destinationAddress, from: source.owner, to: destination.owner, mint: source.mint, amount: BigInt(rawAmount), sequence: sequence++, context: active };
+    const transfer: Transfer = { source: sourceAddress, destination: destinationAddress, from: source?.owner ?? active!.payer, to: destination?.owner ?? active!.payer, mint, amount: BigInt(rawAmount), sequence: sequence++, context: active };
     transfers.push(transfer); active?.transfers.push(transfer);
   }
   for (const [outerIndex, outer] of tx.transaction.message.instructions.entries()) {
@@ -105,7 +111,7 @@ export function decodeFinalizedLaunchLabTransaction(tx: FinalizedBlockTransactio
     used.add(base);
     events.push(swap.side === "buy"
       ? { kind: "verified_buy", launchId: market.launchId, wallet: swap.payer, tokenRaw: base.amount, quoteAtoms: quote.amount, slot, order: base.sequence }
-      : { kind: "sell", launchId: market.launchId, wallet: swap.payer, tokenRaw: base.amount, slot, order: base.sequence });
+      : { kind: "sell", launchId: market.launchId, wallet: swap.payer, tokenRaw: base.amount, quoteAtoms: quote.amount, slot, order: base.sequence });
   }
   for (const transfer of transfers) if (transfer.mint === market.baseMint && !used.has(transfer)) {
     if (![market.authorityAddress, market.marketAddress].includes(transfer.from)) events.push({ kind: "outgoing_transfer", launchId: market.launchId, wallet: transfer.from, tokenRaw: transfer.amount, slot, order: transfer.sequence });
@@ -117,5 +123,7 @@ export function decodeFinalizedLaunchLabTransaction(tx: FinalizedBlockTransactio
   }
   return { signature, events: events.sort((a, b) => a.order - b.order).map((item): PositionEvent => item.kind === "verified_buy"
     ? { kind: item.kind, launchId: item.launchId, wallet: item.wallet, tokenRaw: item.tokenRaw, quoteAtoms: item.quoteAtoms, slot: item.slot }
-    : { kind: item.kind, launchId: item.launchId, wallet: item.wallet, tokenRaw: item.tokenRaw, slot: item.slot }) };
+    : item.kind === "sell"
+      ? { kind: item.kind, launchId: item.launchId, wallet: item.wallet, tokenRaw: item.tokenRaw, quoteAtoms: item.quoteAtoms, slot: item.slot }
+      : { kind: item.kind, launchId: item.launchId, wallet: item.wallet, tokenRaw: item.tokenRaw, slot: item.slot }) };
 }

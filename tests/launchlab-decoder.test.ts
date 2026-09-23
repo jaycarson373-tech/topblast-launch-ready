@@ -22,9 +22,21 @@ function buy(): FinalizedBlockTransaction {
   };
 }
 
+function buyWithEphemeralQuoteAccount(): FinalizedBlockTransaction {
+  const tx = buy();
+  tx.meta!.preTokenBalances = tx.meta!.preTokenBalances!.filter((row) => row.accountIndex !== 3);
+  tx.meta!.postTokenBalances = tx.meta!.postTokenBalances!.filter((row) => row.accountIndex !== 3);
+  const transfer = tx.meta!.innerInstructions![0].instructions[0];
+  transfer.parsed!.info = { ...transfer.parsed!.info, mint: "quote" };
+  return tx;
+}
+
 describe("finalized LaunchLab decoder", () => {
   it("establishes exact basis only for a validated pool buy", () => {
     expect(decodeFinalizedLaunchLabTransaction(buy(), market, 50n).events).toEqual([{ kind: "verified_buy", launchId: "launch-a", wallet: payer, tokenRaw: 50n, quoteAtoms: 100n, slot: 50n }]);
+  });
+  it("accepts the payer's exact temporary quote account when it is opened and closed inside the swap", () => {
+    expect(decodeFinalizedLaunchLabTransaction(buyWithEphemeralQuoteAccount(), market, 50n).events).toEqual([{ kind: "verified_buy", launchId: "launch-a", wallet: payer, tokenRaw: 50n, quoteAtoms: 100n, slot: 50n }]);
   });
   it("fails closed when the registered vault identity differs", () => {
     expect(() => decodeFinalizedLaunchLabTransaction(buy(), { ...market, quoteVault: "other" }, 50n)).toThrow("identity");

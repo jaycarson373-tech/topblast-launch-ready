@@ -14,12 +14,12 @@ export function recentTokenTrades(row: Record<string, unknown>): Promise<RecentT
   if (cached && cached.expires > Date.now()) return cached.result;
   if (cache.size >= 100) cache.delete(cache.keys().next().value!);
   const result = readTrades(row).catch(() => ({ trades: [], available: false, partial: true }));
-  cache.set(key, { expires: Date.now() + 15_000, result });
+  cache.set(key, { expires: Date.now() + 4_000, result });
   return result;
 }
 
 async function readTrades(row: Record<string, unknown>): Promise<RecentTrades> {
-  const signatures = await solanaRpc<Array<{ signature: string; slot: number; err: unknown }>>("getSignaturesForAddress", [row.market_address, { commitment: "finalized", limit: 10 }]);
+  const signatures = await solanaRpc<Array<{ signature: string; slot: number; err: unknown }>>("getSignaturesForAddress", [row.market_address, { commitment: "finalized", limit: 25 }]);
   const market = { launchId: String(row.launch_id), marketAddress: String(row.market_address), baseMint: String(row.base_mint), quoteMint: String(row.quote_mint),
     authorityAddress: String(row.authority_address), creatorAddress: String(row.creator_address), configAddress: String(row.config_address),
     platformConfigAddress: String(row.platform_config_address), baseVault: String(row.base_vault), quoteVault: String(row.quote_vault), baseTokenProgram: String(row.base_token_program), quoteTokenProgram: String(row.quote_token_program) };
@@ -34,7 +34,7 @@ async function readTrades(row: Record<string, unknown>): Promise<RecentTrades> {
     const decoded = (row.venue === "pumpfun" ? decodeFinalizedPumpTransaction : decodeFinalizedLaunchLabTransaction)(tx, market, BigInt(tx.slot));
     return decoded.events.flatMap((event, index): PublicTrade[] => event.kind === "verified_buy" || event.kind === "sell" ? [{
       id: `${market.launchId}:${item.signature}:${index}`, signature: item.signature, wallet: event.wallet, kind: event.kind,
-      token_raw: event.tokenRaw.toString(), quote_atoms: event.kind === "verified_buy" ? event.quoteAtoms.toString() : null,
+      token_raw: event.tokenRaw.toString(), quote_atoms: event.quoteAtoms?.toString() ?? null,
       slot: tx.slot, block_time: tx.blockTime == null ? null : new Date(tx.blockTime * 1000).toISOString(),
     }] : []);
   }));

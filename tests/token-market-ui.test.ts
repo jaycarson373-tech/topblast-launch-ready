@@ -2,8 +2,8 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-const chart = vi.hoisted(() => ({ create: vi.fn(), data: vi.fn(), fit: vi.fn(), range: vi.fn(), remove: vi.fn() }));
-vi.mock("lightweight-charts", () => ({ ColorType: { Solid: "solid" }, LineSeries: "line", createChart: chart.create }));
+const chart = vi.hoisted(() => ({ create: vi.fn(), data: vi.fn(), fit: vi.fn(), range: vi.fn(), remove: vi.fn(), markers: vi.fn(), markerSet: vi.fn() }));
+vi.mock("lightweight-charts", () => ({ ColorType: { Solid: "solid" }, LineSeries: "line", createChart: chart.create, createSeriesMarkers: chart.markers }));
 import { MarketOverview } from "@/components/market-overview";
 import { PriceChart } from "@/components/price-chart";
 import { TokenPage } from "@/components/token-page";
@@ -12,6 +12,7 @@ beforeEach(() => {
   vi.clearAllMocks(); Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   chart.create.mockReturnValue({ addSeries: () => ({ setData: chart.data }), timeScale: () => ({ fitContent: chart.fit, getVisibleRange: () => ({ from: 100, to: 200 }), setVisibleRange: chart.range }), applyOptions: vi.fn(), remove: chart.remove });
+  chart.markers.mockReturnValue({ setMarkers: chart.markerSet });
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -60,13 +61,13 @@ const payload = (priceAtoms = "1000000") => ({
   epochs: [], allocations: [], deposits: [], totalRewardedAtoms: "0", enginePaused: true,
   marketData: { status: "available", priceAtoms, observedAt: "2026-09-22T12:00:00Z" },
 });
-it("automatically refreshes real data every 15 seconds", async () => {
+it("automatically refreshes real data every 5 seconds", async () => {
   vi.useFakeTimers();
   const fetcher = vi.fn(async () => Response.json(payload())); vi.stubGlobal("fetch", fetcher);
   await act(async () => root.render(createElement(TokenPage, { address: "mint-a" })));
   expect(host.textContent).toContain("0.001 STONK");
   fetcher.mockImplementation(async () => Response.json(payload("2000000")));
-  await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
   expect(fetcher).toHaveBeenCalledTimes(2);
   expect(host.textContent).toContain("0.002 STONK");
 });

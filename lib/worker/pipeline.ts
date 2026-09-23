@@ -72,7 +72,7 @@ export async function reconcileMarket(db: SupabaseClient, row: MarketRow, owner:
           const event = decoded.events[index];
           const { error } = await db.rpc("apply_wallet_activity", {
             p_launch_id: row.launch_id, p_wallet: event.wallet, p_signature: decoded.signature, p_event_index: activityOrdinal(transactionIndex, index),
-            p_kind: event.kind, p_token_raw: event.tokenRaw.toString(), p_quote_atoms: event.kind === "verified_buy" ? event.quoteAtoms.toString() : null, p_slot: slot,
+            p_kind: event.kind, p_token_raw: event.tokenRaw.toString(), p_quote_atoms: event.kind === "verified_buy" || event.kind === "sell" ? event.quoteAtoms?.toString() ?? null : null, p_slot: slot,
           });
           if (error) throw error;
         }

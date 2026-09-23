@@ -96,7 +96,7 @@ export function decodeFinalizedPumpTransaction(tx: FinalizedBlockTransaction, ma
     const quote = BigInt((event.quoteAmount.isZero() ? event.solAmount : event.quoteAmount).toString());
     if (quote <= 0n || (swap.buy && swap.quoteIn !== quote)) throw new Error("Pump.fun quote amount does not reconcile");
     used.add(matching[0]);
-    events.push({ order: matching[0].order, event: swap.buy ? { kind: "verified_buy", launchId: market.launchId, wallet: swap.user, tokenRaw: matching[0].amount, quoteAtoms: quote, slot } : { kind: "sell", launchId: market.launchId, wallet: swap.user, tokenRaw: matching[0].amount, slot } });
+    events.push({ order: matching[0].order, event: swap.buy ? { kind: "verified_buy", launchId: market.launchId, wallet: swap.user, tokenRaw: matching[0].amount, quoteAtoms: quote, slot } : { kind: "sell", launchId: market.launchId, wallet: swap.user, tokenRaw: matching[0].amount, quoteAtoms: quote, slot } });
   }
   for (const item of movements) if (!used.has(item)) {
     const from = balances.get(item.source)!.owner, to = balances.get(item.destination)!.owner;

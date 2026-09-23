@@ -41,3 +41,7 @@ it("deduplicates receipts already in indexed history without inventing sell proc
   const trade: PublicTrade = { id: "a", signature: "sig", wallet: "buyer", kind: "sell", token_raw: "10", quote_atoms: null, slot: 100, block_time: null };
   expect(mergeTokenTrades([trade], [{ ...trade, id: "live" }])).toEqual([{ ...trade, id: "live" }]);
 });
+it("publishes exact sell proceeds when the verified venue decoder provides them", async () => {
+  mock.stonk.mockReturnValue({ signature: "buy", events: [{ kind: "sell", wallet: "seller", tokenRaw: 50n, quoteAtoms: 25n }] });
+  expect((await recentTokenTrades(market())).trades[0]).toMatchObject({ kind: "sell", quote_atoms: "25" });
+});
