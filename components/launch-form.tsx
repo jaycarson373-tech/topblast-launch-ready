@@ -376,7 +376,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
       <div className="form-footer">
         <p className="notice">Your wallet signs the reviewed launch transaction. TopBlast never receives your private key.</p>
         {!prepared && !receipt && !result && (wallet
-          ? <button type="submit" className="button venue-button" disabled={busy || imageLoading || total !== 100 || !venueReady}>{busy ? "Preparing review..." : !runtime ? "Checking availability..." : !venueReady ? "Temporarily unavailable" : venue === "pumpfun" ? "Review Pump.fun launch" : "Review StonkFun launch"}</button>
+          ? <button type="submit" className="button venue-button" disabled={busy || imageLoading || total !== 100 || !venueReady}>{busy ? "Preparing launch..." : !runtime ? "Checking availability..." : !venueReady ? "Temporarily unavailable" : venue === "pumpfun" ? "Launch on Pump.fun" : "Launch on STONK"}</button>
           : <button type="button" className="button venue-button" disabled={busy || !venueReady} onClick={() => void connect().catch((caught) => setError(caught instanceof Error ? caught.message : "Wallet connection failed"))}>{busy ? "Connecting..." : !runtime ? "Checking availability..." : !venueReady ? "Temporarily unavailable" : "Connect wallet"}</button>)}
       </div>
       {!testMode && walletPicker}

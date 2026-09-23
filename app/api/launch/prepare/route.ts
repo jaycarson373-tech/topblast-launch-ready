@@ -37,8 +37,16 @@ export async function POST(request: Request) {
     const prepared = await adapter.createLaunch(draft);
     if (!prepared.signedQuote || !prepared.paymentTransaction) throw new Error("The venue returned an incomplete launch quote");
     if (draft.isTest && draft.venue === "stonkfun") {
+      const simulationSlot = Number(prepared.raw?.simulationSlot);
       const simulation = await solanaRpc<{ value: { err: unknown } }>("simulateTransaction", [prepared.paymentTransaction, {
-        encoding: "base64", commitment: "finalized", sigVerify: false, replaceRecentBlockhash: false,
+        encoding: "base64",
+        // The transaction was intentionally built with a confirmed blockhash.
+        // Asking a finalized node to replay that fresh hash can return
+        // BlockhashNotFound even though the transaction is valid.
+        commitment: "confirmed",
+        ...(Number.isSafeInteger(simulationSlot) ? { minContextSlot: simulationSlot } : {}),
+        sigVerify: false,
+        replaceRecentBlockhash: false,
       }]);
       if (simulation.value?.err !== null) throw new Error(`StonkFun test payment simulation failed or returned no verified result: ${JSON.stringify(simulation.value?.err)}`);
       prepared.raw = { ...prepared.raw, simulation: "passed" };

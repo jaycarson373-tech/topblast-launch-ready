@@ -85,6 +85,16 @@ describe("controlled test launch boundary, no real transactions", () => {
     expect((await POST(request(true, "fixture-operator-token"))).status).toBe(400);
     expect(mocks.save).not.toHaveBeenCalled();
   });
+  it("rechecks a fresh Stonk blockhash at confirmed commitment", async () => {
+    vi.stubEnv("PUBLIC_TEST_LAUNCHES_ENABLED", "true");
+    mocks.create.mockResolvedValue({ signedQuote: "quote", paymentTransaction: "unsigned", payment: { lamports: "1000" }, raw: { simulationSlot: 4321 } });
+    expect((await POST(request(true))).status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith("simulateTransaction", ["unsigned", expect.objectContaining({
+      commitment: "confirmed",
+      minContextSlot: 4321,
+      replaceRecentBlockhash: false,
+    })]);
+  });
   it("rejects a different cluster", async () => {
     mocks.rpc.mockResolvedValue("devnet");
     expect((await POST(request(true, "fixture-operator-token"))).status).toBe(400);
