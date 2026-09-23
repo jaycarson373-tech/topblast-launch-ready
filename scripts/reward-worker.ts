@@ -120,7 +120,10 @@ async function runCycle() {
   try {
     const creatorDistribution = await processCreatorFeeDistribution(db, owner);
     if (creatorDistribution.status !== "disabled" && creatorDistribution.status !== "idle") process.stdout.write(`${new Date().toISOString()} creator distribution ${JSON.stringify(creatorDistribution)}\n`);
-    const payout = ["idle", "confirmed", "disabled"].includes(creatorDistribution.status) ? await processAutomaticPayout(db, owner) : { status: "lease_busy" as const };
+    const creatorStepReleasedTreasury = ["disabled", "lease_busy"].includes(creatorDistribution.status);
+    const payout = ["idle", "confirmed", "disabled"].includes(creatorDistribution.status)
+      ? await processAutomaticPayout(db, owner, process.env, !creatorStepReleasedTreasury)
+      : { status: "lease_busy" as const };
     if (payout.status !== "disabled" && payout.status !== "idle") process.stdout.write(`${new Date().toISOString()} payout ${JSON.stringify(payout)}\n`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "automatic payout failed";

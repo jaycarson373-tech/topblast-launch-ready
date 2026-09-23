@@ -33,18 +33,25 @@ export function automaticPayoutReadiness(env: NodeJS.ProcessEnv = process.env) {
   }
 }
 
-export async function processAutomaticPayout(db: SupabaseClient, owner: string, env: NodeJS.ProcessEnv = process.env): Promise<AutomaticPayoutResult> {
+export async function processAutomaticPayout(
+  db: SupabaseClient,
+  owner: string,
+  env: NodeJS.ProcessEnv = process.env,
+  treasuryLeaseHeld = false,
+): Promise<AutomaticPayoutResult> {
   if (!automaticPayoutsConfigured(env)) return { status: "disabled" };
   const treasury = env.TOPBLAST_TREASURY_ADDRESS;
   if (!treasury) throw new Error("TOPBLAST_TREASURY_ADDRESS is required for automatic payouts");
   const signer = createRailwaySigner(env as Record<string, string | undefined>);
   if (signer.publicKey() !== treasury) throw new Error("TREASURY_PRIVATE_KEY does not match TOPBLAST_TREASURY_ADDRESS");
   const limit = payoutLimit(env);
-  const lease = await db.rpc("claim_worker_lease", {
-    p_resource_type: "payout_treasury", p_resource_id: treasury, p_owner_id: owner, p_seconds: 60,
-  });
-  if (lease.error) throw lease.error;
-  if (lease.data !== true) return { status: "lease_busy" };
+  if (!treasuryLeaseHeld) {
+    const lease = await db.rpc("claim_worker_lease", {
+      p_resource_type: "payout_treasury", p_resource_id: treasury, p_owner_id: owner, p_seconds: 60,
+    });
+    if (lease.error) throw lease.error;
+    if (lease.data !== true) return { status: "lease_busy" };
+  }
 
   const inFlight = await db.from("payout_batches").select("id,status,signature").in("status", ["signed", "submitted", "uncertain"]).order("created_at", { ascending: true });
   if (inFlight.error) throw inFlight.error;
