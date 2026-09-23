@@ -65,7 +65,7 @@ async function runCycle() {
 
   const { data: markets, error: marketError } = await db.from("tracked_markets").select("*").eq("active", true);
   if (marketError) throw marketError;
-  for (const market of markets ?? []) {
+  await Promise.all((markets ?? []).map(async (market) => {
     let historyReady = false;
     try {
       historyReady = await reconcileMarket(db, market, owner) === true;
@@ -92,7 +92,7 @@ async function runCycle() {
         process.stderr.write(`${market.launch_id}: Stonk creator-fee reconciliation failed: ${error instanceof Error ? error.message : "unknown error"}\n`);
       }
     }
-  }
+  }));
 
   const { data: funding } = await db.from("funding_intents").select("id").in("status", ["submitted", "uncertain"]);
   for (const intent of funding ?? []) {
