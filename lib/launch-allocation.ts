@@ -1,6 +1,7 @@
 export const FIXED_PROTOCOL_PERCENT = 10;
 export const CREATOR_REWARD_PERCENT = 100 - FIXED_PROTOCOL_PERCENT;
 export const CREATOR_SHARE_STEP = 10;
+export const EPOCH_RELEASE_PERCENT = 65;
 export const initialCreatorShare = { topblastPercent: 80, creatorPercent: 20 };
 export const initialLaunchAllocation = creatorShareToAllocation(initialCreatorShare);
 

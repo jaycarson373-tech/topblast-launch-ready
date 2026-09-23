@@ -17,6 +17,7 @@ describe("Supabase migrations", () => {
     await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609220001_public_listing_controls.sql"), "utf8"));
     await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609220001_public_listing_controls.sql"), "utf8"));
     await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609220003_automatic_creator_fees.sql"), "utf8"));
+    await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609230001_epoch_release_policy.sql"), "utf8"));
     await db.exec("set role service_role");
     await db.query("insert into public.launch_metadata(id,metadata,image_data) values('00000000-0000-4000-8000-000000000099','{}','test-image')");
     await expect(db.query("update public.launch_metadata set image_data='overwritten'")).rejects.toThrow();
@@ -43,9 +44,11 @@ describe("Supabase migrations", () => {
     expect(duplicateA.rows[0].confirm_funding_deposit).toBe(false);
     await db.query("select public.confirm_funding_deposit($1,$2,11,now(),'{}'::jsonb)", [intentB.rows[0].id, `signature-${b}`]);
     await db.query("select public.reserve_epoch_budget($1,1,20,now()-interval '1 hour',now(),1)", [a]);
+    const policies = await db.query<{ launch_id: string; epoch_release_bps: number }>("select launch_id,epoch_release_bps from public.launch_configs order by launch_id");
+    expect(policies.rows).toEqual([{ launch_id: a, epoch_release_bps: 6500 }, { launch_id: b, epoch_release_bps: 6500 }]);
     const balances = await db.query<{ launch_id: string; available_atoms: string; reserved_atoms: string }>("select launch_id,available_atoms,reserved_atoms from public.launch_funding_balances order by launch_id");
     expect(balances.rows).toEqual([
-      { launch_id: a, available_atoms: "0", reserved_atoms: "70" },
+      { launch_id: a, available_atoms: "25", reserved_atoms: "45" },
       { launch_id: b, available_atoms: "70", reserved_atoms: "0" },
     ]);
     const firstLease = await db.query<{ claim_worker_lease: boolean }>("select public.claim_worker_lease('market',$1,'one',60)", [a]);
@@ -55,7 +58,7 @@ describe("Supabase migrations", () => {
     const epoch = await db.query<{ id: string }>("select id from public.reward_epochs where launch_id=$1", [a]);
     const epochId = epoch.rows[0].id;
     const batches: string[] = [];
-    for (const [sequence, amount, wallet] of [[0, 30, "holder-one"], [1, 40, "holder-two"]] as const) {
+    for (const [sequence, amount, wallet] of [[0, 20, "holder-one"], [1, 25, "holder-two"]] as const) {
       const inserted = await db.query<{ id: string }>("insert into public.payout_batches(launch_id,epoch_id,sequence,asset_mint,amount_atoms,status,manifest,manifest_hash,unsigned_transaction,unsigned_message_hash) values($1,$2,$3,'stonk',$4,'prepared','[]','hash','wire','message') returning id", [a, epochId, sequence, amount]);
       const batchId = inserted.rows[0].id; batches.push(batchId);
       await db.query("insert into public.reward_distributions(launch_id,epoch_id,payout_batch_id,wallet,asset_mint,amount_atoms,status,idempotency_key) values($1,$2,$3,$4,'stonk',$5,'pending',$6)", [a, epochId, batchId, wallet, amount, `reward-${wallet}`]);
@@ -66,14 +69,14 @@ describe("Supabase migrations", () => {
     expect(firstPaid.rows[0].confirm_payout_batch).toBe(true);
     expect(duplicatePaid.rows[0].confirm_payout_batch).toBe(false);
     const partial = await db.query<{ status: string; distributed_atoms: string }>("select status,distributed_atoms from public.reward_epochs where id=$1", [epochId]);
-    expect(partial.rows[0]).toEqual({ status: "running", distributed_atoms: "30" });
+    expect(partial.rows[0]).toEqual({ status: "running", distributed_atoms: "20" });
     await db.query("select public.submit_payout_batch($1,'payout-two','signed-two')", [batches[1]]);
     await db.query("select public.confirm_payout_batch($1,31,'{}')", [batches[1]]);
     const completed = await db.query<{ status: string; distributed_atoms: string }>("select status,distributed_atoms from public.reward_epochs where id=$1", [epochId]);
-    expect(completed.rows[0]).toEqual({ status: "completed", distributed_atoms: "70" });
+    expect(completed.rows[0]).toEqual({ status: "completed", distributed_atoms: "45" });
     const aPaid = await db.query<{ paid_atoms: string }>("select paid_atoms from public.launch_funding_balances where launch_id=$1", [a]);
     const bPaid = await db.query<{ paid_atoms: string }>("select paid_atoms from public.launch_funding_balances where launch_id=$1", [b]);
-    expect(aPaid.rows[0].paid_atoms).toBe("70");
+    expect(aPaid.rows[0].paid_atoms).toBe("45");
     expect(bPaid.rows[0].paid_atoms).toBe("0");
     // Public views hide tests even for a service-role caller that bypasses RLS.
     expect((await db.query<{ id: string }>("select id from public.launch_explore")).rows).toEqual([{ id: a }]);

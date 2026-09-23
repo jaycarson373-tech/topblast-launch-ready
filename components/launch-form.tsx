@@ -6,7 +6,7 @@ import { paymentSignatureFromTransaction } from "@/lib/solana/transaction-signat
 import { getWallets } from "@wallet-standard/app";
 import { VenueBadge } from "@/components/venue-badge";
 import Image from "next/image";
-import { initialCreatorShare, updateCreatorShare, creatorShareToAllocation, CREATOR_SHARE_STEP, CREATOR_REWARD_PERCENT, FIXED_PROTOCOL_PERCENT } from "@/lib/launch-allocation";
+import { initialCreatorShare, updateCreatorShare, creatorShareToAllocation, CREATOR_SHARE_STEP, CREATOR_REWARD_PERCENT, EPOCH_RELEASE_PERCENT, FIXED_PROTOCOL_PERCENT } from "@/lib/launch-allocation";
 import { validateTokenImage } from "@/lib/token-image";
 import { clientJson } from "@/lib/client-json";
 
@@ -351,6 +351,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
           ))}
         </div>
         <p className="notice">Your share total: {creatorShare.topblastPercent + creatorShare.creatorPercent}%. Adjust in {CREATOR_SHARE_STEP}-point steps. Protocol receives a fixed {FIXED_PROTOCOL_PERCENT}% of gross funding before your share is split. It is designated for TOPBLAST buybacks and burns, with completed actions published onchain. <a href="/docs#funding">How funding works</a>.</p>
+        <p className="notice"><strong>Carry-forward policy:</strong> each epoch can reserve {EPOCH_RELEASE_PERCENT}% of the currently available holder-reward balance. The remaining {100 - EPOCH_RELEASE_PERCENT}% stays isolated in this launch for later epochs.</p>
       </div>
       </fieldset>
       {prepared && !receipt && (
@@ -362,6 +363,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
           <Image src={prepared.logo} alt="Token image included in this launch" width={96} height={96} className="review-token-image" unoptimized />
           <p className="notice">Venue: {prepared.review.venue === "pumpfun" ? "Pump.fun" : "StonkFun"}. Pair: {prepared.review.symbol} / {prepared.review.quoteSymbol}. Your share: {prepared.review.creatorShare.topblastPercent}% rewards / {prepared.review.creatorShare.creatorPercent}% creator.</p>
           <p className="notice">Overall funding allocation: {prepared.review.allocation.topblastPercent}% rewards, {prepared.review.allocation.creatorPercent}% creator retained, {prepared.review.allocation.protocolPercent}% protocol treasury designated for TOPBLAST buybacks and burns. Your two controls divide the remaining {CREATOR_REWARD_PERCENT}%, not 100% of gross funding. Treasury allocation is not presented as burned until a confirmed burn transaction is published.</p>
+          <p className="notice">Epoch release: {EPOCH_RELEASE_PERCENT}% of the available holder-reward balance is reserved for each eligible epoch. {100 - EPOCH_RELEASE_PERCENT}% carries forward inside this launch. No funded balance means no payout.</p>
           <p className="notice">Reward asset: {prepared.review.quoteSymbol}. Reward treasury: <span className="mono">{prepared.rewardTreasury ?? "Unavailable. Do not approve until verified."}</span>. Protocol treasury: <span className="mono">{prepared.protocolTreasury ?? "Unavailable. Do not approve until verified."}</span>.</p>
           <p className="notice"><strong>Permanent configuration:</strong> allocation and token metadata are fixed at launch. {prepared.review.venue === "stonkfun" ? "The onchain creator-fee recipient is the TopBlast treasury. Only finalized fee forwards matching this exact pool can fund its rewards; the worker sends the creator share and eligible-holder airdrops." : "Pump is beta. Creator fees use a creator-wide vault and are not credited until safely attributed per launch. No initial buy, native cashback, mayhem, or PumpSwap graduation support. Only the reviewed official quote pair is accepted."}</p>
           {prepared.review.venue === "pumpfun" && <p className="notice">Shown SOL cost is the simulated debit for network fees and account creation. No initial buy. Creator fees follow Pump.fun’s schedule. TopBlast rewards require a separate creator deposit in {prepared.review.quoteSymbol}.</p>}
