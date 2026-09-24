@@ -1,11 +1,26 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Keypair } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
-import { verifyStonkForwardedFee } from "@/lib/funding/stonk-auto";
+import type { SupabaseClient } from "@supabase/supabase-js";
+const mock = vi.hoisted(() => ({ rpc: vi.fn() }));
+vi.mock("@/lib/solana/rpc", () => ({ solanaRpc: mock.rpc }));
+import { reconcileStonkForwardedFees, verifyStonkForwardedFee } from "@/lib/funding/stonk-auto";
 
 const address = () => Keypair.generate().publicKey.toBase58();
 
 describe("automatic Stonk creator-fee funding", () => {
+  it("skips another launch's already credited shared-treasury receipt without blocking reconciliation", async () => {
+    const treasury = address(); vi.stubEnv("TOPBLAST_TREASURY_ADDRESS", treasury);
+    try {
+      mock.rpc.mockResolvedValue([{ signature: "2".repeat(64), slot: 20, err: null }]);
+      const query = { eq: () => query, maybeSingle: async () => ({ data: { id: "fee-a", launch_id: "launch-a" }, error: null }) };
+      const db = { from: () => ({ select: () => query }), rpc: vi.fn() };
+      const market = { launch_id: "launch-b", launch_slot: 10, last_indexed_slot: 30, quote_mint: address(), quote_vault: address(), authority_address: address(), creator_address: treasury };
+      expect(await reconcileStonkForwardedFees(db as unknown as SupabaseClient, market)).toEqual({ credited: 0 });
+      expect(db.rpc).not.toHaveBeenCalled();
+      expect(mock.rpc).toHaveBeenCalledOnce();
+    } finally { vi.unstubAllEnvs(); vi.clearAllMocks(); }
+  });
   it("accepts only the exact launch vault to treasury transfer and measured balance delta", () => {
     const signature = "2".repeat(64), treasury = address(), treasuryTokenAccount = address();
     const market = { launch_id: "launch-a", launch_slot: 10, last_indexed_slot: 30, quote_mint: address(), quote_vault: address(), authority_address: address(), creator_address: treasury };

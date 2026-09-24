@@ -86,10 +86,10 @@ export async function reconcileStonkForwardedFees(db: SupabaseClient, market: Ma
   for (const row of signatures.filter((item) => !item.err && item.slot >= Number(market.launch_slot) && item.slot <= Number(market.last_indexed_slot)).reverse()) {
     const existing = await db.from("fee_events").select("id,launch_id").eq("signature", row.signature).eq("asset_mint", market.quote_mint).maybeSingle();
     if (existing.error) throw existing.error;
-    if (existing.data) {
-      if (existing.data.launch_id !== market.launch_id) throw new Error("A Stonk fee receipt is already attributed to another launch");
-      continue;
-    }
+    // All SOL-paired launches scan the same treasury ATA. A receipt already
+    // credited to A must be skipped for B, not abort B's remaining history.
+    // The database still rejects any attempt to credit one receipt twice.
+    if (existing.data) continue;
     const tx = await solanaRpc<ParsedTransaction | null>("getTransaction", [row.signature, { encoding: "jsonParsed", commitment: "finalized", maxSupportedTransactionVersion: 0 }]);
     let proof;
     try { proof = verifyStonkForwardedFee({ tx, signature: row.signature, market, treasury, treasuryTokenAccount }); }

@@ -66,11 +66,14 @@ async function runCycle() {
 
   const { data: markets, error: marketError } = await db.from("tracked_markets").select("*").eq("active", true);
   if (marketError) throw marketError;
-  await Promise.all((markets ?? []).map(async (market) => {
-    let historyReady = false;
+  // Fee operations share the treasury signer. The database lease permits the
+  // same owner to renew it, so Promise.all with one owner is NOT mutual exclusion.
+  // Serialize treasury work; independent market indexing remains parallel below.
+  for (const market of markets ?? []) {
     if (market.venue === "pumpfun") {
       try {
         const result = await processPumpCreatorFees(db, market, owner);
+        if (!["disabled", "lease_busy", "uncertain"].includes(result.status)) await db.from("system_config").delete().eq("key", `pump_fee_error:${market.launch_id}`);
         if (!['disabled', 'idle'].includes(result.status)) process.stdout.write(`${market.launch_id}: Pump fee routing ${JSON.stringify(result)}\n`);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Pump fee routing failed";
@@ -78,6 +81,9 @@ async function runCycle() {
         process.stderr.write(`${market.launch_id}: Pump fee routing failed: ${message}\n`);
       }
     }
+  }
+  await Promise.all((markets ?? []).map(async (market) => {
+    let historyReady = false;
     try {
       historyReady = await reconcileMarket(db, market, owner) === true;
       if (!historyReady) needsBackfill = true;

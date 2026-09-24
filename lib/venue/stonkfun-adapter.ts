@@ -12,6 +12,8 @@ import type { LaunchDraft } from "@/lib/types";
 import { getAdminDb } from "@/lib/db/server";
 import { prepareStonkLaunch, verifyStonkPricing, isStonkDirectQuote, recoverStonkLaunch } from "@/lib/solana/stonk-launchlab";
 import { paymentSignatureFromTransaction } from "@/lib/solana/transaction-signature";
+import { z } from "zod";
+import { isAddress } from "@solana/addresses";
 
 type ApiEnvelope = { data?: Record<string, unknown>; error?: { code?: string; message?: string; retryable?: boolean } };
 
@@ -119,9 +121,30 @@ export class StonkFunAdapter implements LaunchVenueAdapter {
 
   async getCreatorFees(mint: string): Promise<CreatorFees> {
     const data = await this.call(`/tokens/${encodeURIComponent(mint)}/fees`);
+    let forwarding: CreatorFees["forwarding"], forwardingError: string | undefined;
+    // Read the same public summary as Stonk's creator UI. These are diagnostic
+    // venue balances, NEVER a funding credit or a per-token payment receipt.
+    if (typeof data.creator === "string" && isAddress(data.creator) && data.claimable === null) {
+      try {
+        const url = new URL("/api/creator-fees", this.baseUrl);
+        url.searchParams.set("mint", mint); url.searchParams.set("wallet", data.creator);
+        const response = await fetch(url.toString(), { cache: "no-store", signal: AbortSignal.timeout(5_000) });
+        if (!response.ok) throw new Error(`Stonk forwarding summary returned HTTP ${response.status}`);
+        const atoms = z.string().regex(/^(0|[1-9][0-9]*)$/);
+        const summary = z.object({ eligible: z.literal(true), creator: z.literal(data.creator), payout: z.object({
+          mode: z.literal("forwarded"), quoteMint: z.string().refine(isAddress), quoteSymbol: z.string().min(1).max(32), decimals: z.number().int().min(0).max(18),
+          accruedRaw: atoms, forwardedRaw: atoms, pendingRaw: atoms, minForwardUsd: z.number().finite().nonnegative(),
+          lastSignature: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{64,90}$/).optional(),
+        }) }).parse(await response.json());
+        const p = summary.payout;
+        forwarding = { quoteMint: p.quoteMint, quoteSymbol: p.quoteSymbol, decimals: p.decimals,
+          tokenAccruedAtoms: p.accruedRaw, creatorQuoteForwardedAtoms: p.forwardedRaw, creatorQuotePendingAtoms: p.pendingRaw,
+          minimumForwardUsd: p.minForwardUsd, lastSignature: p.lastSignature, attribution: "creator_quote_aggregate_not_launch_funding" };
+      } catch { forwardingError = "Stonk forwarding threshold and aggregate balance could not be verified. No reward funding was inferred."; }
+    }
     return {
       claimable: data.claimable && typeof data.claimable === "object" ? data.claimable as Record<string, unknown> : null,
-      reason: stringValue(data.reason), scope: stringValue(data.scope), raw: data,
+      reason: stringValue(data.reason), scope: stringValue(data.scope), raw: data, forwarding, forwardingError,
     };
   }
 

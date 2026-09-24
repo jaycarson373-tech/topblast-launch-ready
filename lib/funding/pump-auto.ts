@@ -40,7 +40,7 @@ async function loadSharingConfig(mint: PublicKey): Promise<{ address: PublicKey;
 
 function assertTreasuryConfig(mint: PublicKey, treasury: PublicKey, loaded: { address: PublicKey; config: SharingConfig }) {
   const { config } = loaded;
-  if (!config.mint.equals(mint) || !config.admin.equals(treasury) || !config.adminRevoked || config.shareholders.length !== 1 || !config.shareholders[0].address.equals(treasury) || config.shareholders[0].shareBps !== 10_000) {
+  if (config.version !== 2 || !config.mint.equals(mint) || !config.admin.equals(treasury) || !config.adminRevoked || config.shareholders.length !== 1 || !config.shareholders[0].address.equals(treasury) || config.shareholders[0].shareBps !== 10_000) {
     throw new Error("Pump fee-sharing config does not match the immutable TopBlast treasury route");
   }
 }
@@ -51,7 +51,8 @@ async function prepareTransaction(treasury: PublicKey, instructions: Transaction
     .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }), ...instructions);
   const unsigned = transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64");
   const simulation = await solanaRpc<{ value: { err: unknown; logs?: string[] } }>("simulateTransaction", [unsigned, { encoding: "base64", commitment: "finalized", sigVerify: false, replaceRecentBlockhash: false }]);
-  if (simulation.value.err) throw new Error(`Pump fee transaction simulation failed: ${JSON.stringify(simulation.value.err)} ${(simulation.value.logs ?? []).slice(-3).join(" ")}`);
+  if (simulation.value?.err !== null) throw new Error(`Pump fee transaction simulation failed or was incomplete: ${JSON.stringify(simulation.value?.err)} ${(simulation.value?.logs ?? []).slice(-3).join(" ")}`);
+  if (!Number.isSafeInteger(latest.value.lastValidBlockHeight) || latest.value.lastValidBlockHeight <= 0) throw new Error("Pump fee transaction validity is unavailable");
   return { unsigned, hash: messageHash(transaction), lastValidBlockHeight: latest.value.lastValidBlockHeight };
 }
 
@@ -64,7 +65,7 @@ async function operationFor(db: SupabaseClient, launchId: string, kind: Operatio
   return existing.data as Operation;
 }
 
-async function advanceOperation(db: SupabaseClient, operation: Operation, treasury: PublicKey, instructions: TransactionInstruction[]) {
+export async function advancePumpFeeOperation(db: SupabaseClient, operation: Operation, treasury: PublicKey, instructions: TransactionInstruction[], owner: string) {
   let row = operation;
   if (row.status === "planned") {
     const prepared = await prepareTransaction(treasury, instructions);
@@ -74,10 +75,32 @@ async function advanceOperation(db: SupabaseClient, operation: Operation, treasu
     row = updated.data as Operation;
   }
   if (row.status === "prepared") {
+    // Only an unsigned intent can receive a new blockhash. Signed/submitted
+    // receipts always reconcile their original bytes, even after a restart.
+    if (row.signature || row.signed_transaction) throw new Error("Prepared Pump fee operation already has a signed receipt");
+    const height = await solanaRpc<number>("getBlockHeight", [{ commitment: "confirmed" }]);
+    if (!Number.isSafeInteger(height) || !Number.isSafeInteger(Number(row.last_valid_block_height))) throw new Error("Pump fee blockheight is unavailable");
+    if (Number(row.last_valid_block_height) - height < 20) {
+      const prepared = await prepareTransaction(treasury, instructions);
+      const refreshed = await db.from("pump_fee_operations").update({ unsigned_transaction: prepared.unsigned, unsigned_message_hash: prepared.hash, last_valid_block_height: prepared.lastValidBlockHeight, updated_at: new Date().toISOString() })
+        .eq("id", row.id).eq("status", "prepared").eq("unsigned_message_hash", row.unsigned_message_hash).is("signature", null).is("signed_transaction", null).select("*").maybeSingle();
+      if (refreshed.error) throw refreshed.error;
+      if (!refreshed.data) return { status: "lease_busy" as const };
+      row = refreshed.data as Operation;
+      const refreshedHeight = await solanaRpc<number>("getBlockHeight", [{ commitment: "confirmed" }]);
+      if (!Number.isSafeInteger(refreshedHeight) || Number(row.last_valid_block_height) - refreshedHeight < 20) throw new Error("Pump fee simulation took too long; unsigned operation will be retried");
+    }
+    // RPC/simulation may have outlived either lease. Reacquire immediately
+    // before signing rather than trusting the lease at the beginning of a cycle.
+    for (const [type, id, seconds] of [["pump_fee", row.launch_id, 90], ["payout_treasury", treasury.toBase58(), 60]] as const) {
+      const lease = await db.rpc("claim_worker_lease", { p_resource_type: type, p_resource_id: id, p_owner_id: owner, p_seconds: seconds });
+      if (lease.error) throw lease.error;
+      if (lease.data !== true) return { status: "lease_busy" as const };
+    }
     const signer = createRailwaySigner();
     const signed = signer.signTransaction({ transactionBase64: String(row.unsigned_transaction), expectedMessageHash: String(row.unsigned_message_hash), expectedPayer: treasury.toBase58() });
     const signature = paymentSignatureFromTransaction(Buffer.from(signed, "base64"));
-    const persisted = await db.from("pump_fee_operations").update({ status: "signed", signed_transaction: signed, signature, updated_at: new Date().toISOString() }).eq("id", row.id).eq("status", "prepared").select("id").maybeSingle();
+    const persisted = await db.from("pump_fee_operations").update({ status: "signed", signed_transaction: signed, signature, updated_at: new Date().toISOString() }).eq("id", row.id).eq("status", "prepared").eq("unsigned_message_hash", row.unsigned_message_hash).is("signature", null).is("signed_transaction", null).select("id").maybeSingle();
     if (persisted.error) throw persisted.error;
     if (!persisted.data) return { status: "lease_busy" as const };
     await broadcastSignedCheckedTransfer(signed).catch(() => undefined);
@@ -225,7 +248,7 @@ export async function processPumpCreatorFees(db: SupabaseClient, market: PumpMar
       await PUMP_SDK.createFeeSharingConfig({ creator: treasury, mint, pool: null }),
       await PUMP_SDK.updateFeeSharesV2({ authority: treasury, mint, currentShareholders: [treasury], newShareholders: [{ address: treasury, shareBps: 10_000 }], quoteMint: new PublicKey(market.quote_mint), quoteTokenProgram: quote.tokenProgram }),
     ];
-    return advanceOperation(db, setup, treasury, instructions);
+    return advancePumpFeeOperation(db, setup, treasury, instructions, owner);
   }
   if (!curve.creator.equals(sharing) || !loaded) throw new Error("Pump creator is not the TopBlast treasury or the launch's fee-sharing config");
   assertTreasuryConfig(mint, treasury, loaded);
@@ -244,11 +267,11 @@ export async function processPumpCreatorFees(db: SupabaseClient, market: PumpMar
   const distribution = await online.buildDistributeCreatorFeesInstructions(mint, { quoteMint: new PublicKey(market.quote_mint), quoteTokenProgram: quote.tokenProgram, payer: treasury });
   if (distribution.isGraduated) throw new Error("PumpSwap graduation is not supported yet; tracking and fee distribution are paused");
   if (existing.data) {
-    const recovered = await advanceOperation(db, existing.data as Operation, treasury, distribution.instructions);
+    const recovered = await advancePumpFeeOperation(db, existing.data as Operation, treasury, distribution.instructions, owner);
     return { ...recovered, amountAtoms: balance.amount.toString() } as Result;
   }
   const key = `pump-distribute:${market.launch_id}:${balance.slot}:${balance.amount}`;
   const operation = await operationFor(db, market.launch_id, "distribute", key);
-  const result = await advanceOperation(db, operation, treasury, distribution.instructions);
+  const result = await advancePumpFeeOperation(db, operation, treasury, distribution.instructions, owner);
   return { ...result, amountAtoms: balance.amount.toString() } as Result;
 }

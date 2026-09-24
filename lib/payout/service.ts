@@ -71,6 +71,7 @@ export async function reconcilePayoutBatch(batchId: string) {
   const finality = await verifyFinalizedSignedTransaction(batch.signature, batch.signed_transaction);
   if (!finality) {
     const height = await solanaRpc<number>("getBlockHeight", [{ commitment: "finalized" }]);
+    if (!Number.isSafeInteger(height) || !Number.isSafeInteger(Number(batch.last_valid_block_height)) || Number(batch.last_valid_block_height) <= 0) throw new Error("Payout blockheight validity is unavailable");
     if (batch.last_valid_block_height && height > Number(batch.last_valid_block_height)) {
       // Never rebuild an expired transaction from a single missing RPC result.
       // A validator may have accepted it while the queried RPC is delayed or
@@ -80,6 +81,10 @@ export async function reconcilePayoutBatch(batchId: string) {
       await db.from("payout_batches").update({ status: "uncertain", error_message: message, updated_at: new Date().toISOString() }).eq("id", batchId).neq("status", "confirmed");
       return { status: "uncertain_expired", signature: batch.signature, batchId };
     }
+    // A worker can stop after persisting the signed receipt and before the
+    // initial broadcast. Resume those exact bytes while their blockhash is valid.
+    // Rebroadcasting the same signature is idempotent, not a second payment.
+    await broadcastSignedCheckedTransfer(batch.signed_transaction).catch(() => undefined);
     return { status: "submitted", signature: batch.signature, batchId };
   }
   const { error: rpcError } = await db.rpc("confirm_payout_batch", { p_batch_id: batchId, p_slot: finality.slot, p_proof: { version: 1, ...finality, manifestHash: batch.manifest_hash } });

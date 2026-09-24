@@ -39,6 +39,13 @@ export interface CreatorFees {
   claimable: null | Record<string, unknown>;
   reason?: string;
   scope?: string;
+  forwarding?: {
+    quoteMint: string; quoteSymbol: string; decimals: number;
+    tokenAccruedAtoms: string; creatorQuoteForwardedAtoms: string; creatorQuotePendingAtoms: string;
+    minimumForwardUsd: number; lastSignature?: string;
+    attribution: "creator_quote_aggregate_not_launch_funding";
+  };
+  forwardingError?: string;
   raw: Record<string, unknown>;
 }
 export interface VenueMarketData { priceUsd: number | null; marketCapUsd: number | null; volume24hUsd: number | null; liquidityUsd: number | null; raw: Record<string, unknown> }

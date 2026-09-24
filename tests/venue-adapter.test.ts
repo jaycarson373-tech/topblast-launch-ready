@@ -7,6 +7,27 @@ vi.mock("@/lib/db/server", () => ({ getAdminDb: () => ({ from: () => ({ select: 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("StonkFunAdapter", () => {
+  it("labels Stonk forwarding totals as creator-wide diagnostics, never launch funding", async () => {
+    const creator = "AeYBHj5vf6P9DPHFcewsLdMp3atNfm1RxZ3gSK49Xo42";
+    const fetchMock = vi.fn().mockResolvedValueOnce(Response.json({ data: { creator, claimable: null } }))
+      .mockResolvedValueOnce(Response.json({ eligible: true, creator, payout: { mode: "forwarded", quoteMint: "So11111111111111111111111111111111111111112", quoteSymbol: "SOL", decimals: 9, accruedRaw: "841744", forwardedRaw: "123000000", pendingRaw: "841744", minForwardUsd: 5 } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const fees = await new StonkFunAdapter("https://example.test/api/public/v1").getCreatorFees("mint");
+    expect(fees.forwarding).toMatchObject({ tokenAccruedAtoms: "841744", creatorQuoteForwardedAtoms: "123000000", minimumForwardUsd: 5, attribution: "creator_quote_aggregate_not_launch_funding" });
+    expect(fees.claimable).toBeNull();
+    expect(fetchMock.mock.calls[1][0]).toBe(`https://example.test/api/creator-fees?mint=mint&wallet=${creator}`);
+  });
+  it("keeps the public fee response usable if forwarding diagnostics fail", async () => {
+    const creator = "AeYBHj5vf6P9DPHFcewsLdMp3atNfm1RxZ3gSK49Xo42";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(Response.json({ data: { creator, claimable: null, reason: "Forwarded by venue" } })).mockResolvedValueOnce(Response.json({}, { status: 503 })));
+    const fees = await new StonkFunAdapter().getCreatorFees("mint");
+    expect(fees.reason).toBe("Forwarded by venue"); expect(fees.forwarding).toBeUndefined(); expect(fees.forwardingError).toContain("could not be verified");
+  });
+  it("rejects another creator's forwarding summary", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(Response.json({ data: { creator: "AeYBHj5vf6P9DPHFcewsLdMp3atNfm1RxZ3gSK49Xo42", claimable: null } })).mockResolvedValueOnce(Response.json({ eligible: true, creator: "11111111111111111111111111111111", payout: {} })));
+    const fees = await new StonkFunAdapter().getCreatorFees("mint");
+    expect(fees.forwarding).toBeUndefined(); expect(fees.forwardingError).toBeTruthy();
+  });
   it("uses Stonk's replacement pricing API, never the retired payment prepare endpoint", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: { curve: "fixture" } }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
