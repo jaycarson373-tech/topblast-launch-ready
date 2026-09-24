@@ -92,6 +92,18 @@ describe("Pump.fun verified trade boundary", () => {
   });
 });
 describe("finalized snapshot boundaries", () => {
+  it("keeps initial pool minting separate from an atomic Pump dev-buy basis", () => {
+    const { tx, market } = fixture();
+    const poolBalance = tx.meta!.preTokenBalances!.find(b => b.owner === market.marketAddress)!;
+    const supply = poolBalance.uiTokenAmount.amount;
+    tx.meta!.preTokenBalances = tx.meta!.preTokenBalances!.filter(b => b !== poolBalance);
+    tx.meta!.innerInstructions![0].instructions.unshift({ programId: market.baseTokenProgram, stackHeight: 2, parsed: { type: "mintTo", info: { mint: market.baseMint, account: market.baseVault, amount: supply } } });
+    const events = decodeFinalizedPumpTransaction(tx, market, 100n).events;
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe("verified_buy");
+    tx.meta!.innerInstructions![0].instructions[0].parsed!.info!.mint = key();
+    expect(() => decodeFinalizedPumpTransaction(tx, market, 100n)).toThrow();
+  });
   it("preserves transaction order ahead of individual event indexes", () => {
     expect(activityOrdinal(2, 0)).toBeGreaterThan(activityOrdinal(1, 65535));
     expect(() => activityOrdinal(32768, 0)).toThrow();

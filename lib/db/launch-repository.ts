@@ -4,13 +4,13 @@ import type { LaunchDraft, LaunchSummary } from "@/lib/types";
 import type { SubmittedLaunch, VenueLaunch } from "@/lib/venue/launch-venue-adapter";
 import { addHeliusWebhookAddresses } from "@/lib/indexer/helius-webhook";
 import { inspectLaunchLabMarket } from "@/lib/solana/launchlab";
-import { Transaction } from "@solana/web3.js";
+import { VersionedTransaction } from "@solana/web3.js";
 import { inspectPumpMarket } from "@/lib/solana/pumpfun";
 
 export async function createLaunchDraft(draft: LaunchDraft, signedQuote: string, paymentTransaction: string, expiresAt?: string): Promise<string> {
-  const transaction = Transaction.from(Buffer.from(paymentTransaction, "base64"));
-  if (transaction.feePayer?.toBase58() !== draft.creatorWallet) throw new Error("StonkFun payment fee payer does not match the creator wallet");
-  const paymentMessageHash = createHash("sha256").update(transaction.serializeMessage()).digest("hex");
+  const transaction = VersionedTransaction.deserialize(Buffer.from(paymentTransaction, "base64"));
+  if (transaction.message.staticAccountKeys[0]?.toBase58() !== draft.creatorWallet) throw new Error("Launch fee payer does not match the creator wallet");
+  const paymentMessageHash = createHash("sha256").update(transaction.message.serialize()).digest("hex");
   const db = getAdminDb();
   const { data, error } = await db.from("launches").insert({
     creator_wallet: draft.creatorWallet,

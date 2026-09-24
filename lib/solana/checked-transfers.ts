@@ -10,6 +10,7 @@ import {
 import {
   PublicKey,
   Transaction,
+  VersionedTransaction,
   TransactionInstruction,
   SystemProgram,
 } from "@solana/web3.js";
@@ -105,10 +106,11 @@ export function inspectSignedCheckedTransfer(input: {
 }
 
 export async function broadcastSignedCheckedTransfer(signedTransaction: string) {
+  const decoded = VersionedTransaction.deserialize(Buffer.from(signedTransaction, "base64"));
   const inspected = inspectSignedCheckedTransfer({
     signedTransaction,
-    expectedMessageHash: messageHash(Transaction.from(Buffer.from(signedTransaction, "base64"))),
-    expectedPayer: Transaction.from(Buffer.from(signedTransaction, "base64")).feePayer!.toBase58(),
+    expectedMessageHash: createHash("sha256").update(decoded.message.serialize()).digest("hex"),
+    expectedPayer: decoded.message.staticAccountKeys[0].toBase58(),
   });
   const signature = await solanaRpc<string>("sendTransaction", [inspected.bytes.toString("base64"), {
     encoding: "base64", skipPreflight: false, preflightCommitment: "confirmed", maxRetries: 3,

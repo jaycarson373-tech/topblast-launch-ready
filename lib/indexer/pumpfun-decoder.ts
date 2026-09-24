@@ -1,7 +1,7 @@
 import { pumpIdl, PUMP_SDK, PUMP_PROGRAM_ID, PUMP_EVENT_AUTHORITY_PDA, GLOBAL_PDA, creatorVaultPda, feeSharingConfigPda, type TradeEventBc } from "@/lib/solana/pump-sdk";
 import { PublicKey } from "@solana/web3.js";
 import { PUMP_SOL_MINT } from "@/lib/solana/pumpfun";
-import { decode58, type FinalizedBlockTransaction, type LaunchLabDecoderMarket } from "./launchlab-decoder";
+import { decode58, poolMintIssuance, type FinalizedBlockTransaction, type LaunchLabDecoderMarket } from "./launchlab-decoder";
 import type { PositionEvent } from "@/lib/rewards/position";
 
 type Ix = FinalizedBlockTransaction["transaction"]["message"]["instructions"][number];
@@ -30,10 +30,12 @@ export function decodeFinalizedPumpTransaction(tx: FinalizedBlockTransaction, ma
     balances.set(address, { owner: row.owner, pre: previous?.pre ?? 0n, post: previous?.post ?? 0n, [phase]: BigInt(row.uiTokenAmount.amount) });
   }
   const swaps: Swap[] = [], movements: Movement[] = [];
+  let poolIssuance = 0n;
   // The original creator remains immutable in the ledger. Pump can move fees
   // to this mint's deterministic sharing PDA without invalidating earlier buys.
   const creators = [market.creatorAddress, feeSharingConfigPda(new PublicKey(market.baseMint)).toBase58()];
   function visit(ix: Ix, inherited: Swap | null, depth: number): Swap | null {
+    poolIssuance += poolMintIssuance(ix, market);
     let active = inherited;
     if (ix.programId === PUMP_PROGRAM_ID.toBase58() && ix.data) {
       const bytes = decode58(ix.data);
@@ -108,7 +110,7 @@ export function decodeFinalizedPumpTransaction(tx: FinalizedBlockTransaction, ma
     if (to !== market.marketAddress) events.push({ order: item.order, event: { kind: "incoming_transfer", launchId: market.launchId, wallet: to, tokenRaw: item.amount, slot } });
   }
   for (const [address, balance] of balances) {
-    const delta = movements.reduce((sum, item) => sum + (item.destination === address ? item.amount : 0n) - (item.source === address ? item.amount : 0n), 0n);
+    const delta = movements.reduce((sum, item) => sum + (item.destination === address ? item.amount : 0n) - (item.source === address ? item.amount : 0n), address === market.baseVault ? poolIssuance : 0n);
     if (delta !== balance.post - balance.pre) throw new Error("Pump.fun transfers do not reconcile to finalized balances");
   }
   return { signature, events: events.sort((a, b) => a.order - b.order).map((item) => item.event) };

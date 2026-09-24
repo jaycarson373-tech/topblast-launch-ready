@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type InvalidEvent } from "react";
-import { Keypair, Transaction } from "@solana/web3.js";
+import { Keypair, VersionedTransaction } from "@solana/web3.js";
 import { paymentSignatureFromTransaction } from "@/lib/solana/transaction-signature";
 import { getWallets } from "@wallet-standard/app";
 import { VenueBadge } from "@/components/venue-badge";
@@ -10,6 +10,8 @@ import { initialCreatorShare, updateCreatorShare, creatorShareToAllocation, CREA
 import { validateTokenImage } from "@/lib/token-image";
 import { clientJson } from "@/lib/client-json";
 import { PairPicker, type PairOption } from "@/components/pair-picker";
+import type { DevBuyReview } from "@/lib/solana/dev-buy";
+import { formatTokenAtoms } from "@/lib/token-display";
 
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const STONK_DEFAULT_QUOTE_MINT = process.env.NEXT_PUBLIC_STONK_QUOTE_MINT ?? SOL_MINT;
@@ -33,7 +35,7 @@ interface LaunchStatus { status: string; mint?: string; pool?: string; signature
 interface Prepared {
   rewardTreasury?: string;
   protocolTreasury?: string;
-  raw?: { mintSignerRequired?: boolean; creationMethod?: string; feeRecipient?: string; receiverId?: string; venueFees?: { denominator: string; protocolRate: string; platformRate: string; creatorRate: string } };
+  raw?: { devBuy?: DevBuyReview; mintSignerRequired?: boolean; creationMethod?: string; feeRecipient?: string; receiverId?: string; venueFees?: { denominator: string; protocolRate: string; platformRate: string; creatorRate: string } };
   logo: string;
   launchId: string;
   signedQuote: string;
@@ -85,11 +87,13 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
   const [pumpPairs, setPumpPairs] = useState<PairOption[]>([PUMP_SOL_PAIR]);
   const [pumpPairMint, setPumpPairMint] = useState(SOL_MINT);
   const [pairError, setPairError] = useState("");
+  const [devBuyAmount, setDevBuyAmount] = useState("");
   const venueReady = Boolean(venue === "stonkfun" ? runtime?.ready : runtime?.pumpReady);
   const total = useMemo(() => allocation.topblastPercent + allocation.creatorPercent + allocation.protocolPercent, [allocation]);
   const stonkPair = stonkPairs.find((pair) => pair.mint === stonkPairMint) ?? STONK_PAIR;
   const pumpPair = pumpPairs.find((pair) => pair.mint === pumpPairMint) ?? PUMP_SOL_PAIR;
   const selectedPair = venue === "pumpfun" ? pumpPair : stonkPair;
+  useEffect(() => { setDevBuyAmount(""); }, [venue, selectedPair.mint]);
 
   useEffect(() => {
     try {
@@ -216,6 +220,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
         creatorWallet: connected.address,
         name: form.get("name"), symbol: form.get("symbol"), description: form.get("description"), logo,
         quoteMint: selectedPair.mint, quoteSymbol: selectedPair.symbol, feeTier: form.get("feeTier") ?? "1%", allocation,
+        devBuyAmount: devBuyAmount.trim() || "0",
         website: form.get("website"), twitter: form.get("twitter"), telegram: form.get("telegram"),
       };
       const { response, body } = await clientJson("/api/launch/prepare", { method: "POST", headers: requestHeaders(), body: JSON.stringify(payload) }, 70_000, "Preparation timed out. No wallet signature was requested. Your details are still here; try preparing again.");
@@ -285,9 +290,9 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
       let bytes = decodeBase64(prepared.paymentTransaction);
       if (prepared.review.venue === "pumpfun" || prepared.raw?.mintSignerRequired) {
         if (!mintSigner.current) throw new Error("Mint preparation expired. Prepare a fresh review.");
-        const tx = Transaction.from(bytes);
-        tx.partialSign(mintSigner.current);
-        bytes = new Uint8Array(tx.serialize({ requireAllSignatures: false }));
+        const tx = VersionedTransaction.deserialize(bytes);
+        tx.sign([mintSigner.current]);
+        bytes = new Uint8Array(tx.serialize());
       }
       const signed = await signer.signTransaction({ account: wallet, transaction: bytes, chain: "solana:mainnet" });
       const signedTransaction = signed[0]?.signedTransaction;
@@ -336,6 +341,10 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
         {venue === "stonkfun" ? <><PairPicker key="stonkfun-pairs" id="stonk-pair" label="StonkFun quote pair" venue="stonkfun" pairs={stonkPairs} value={stonkPairMint} onChange={setStonkPairMint} /><p className="notice">{stonkPairs.length} live StonkFun pairs. Search by ticker, name, or mint address. Rewards use the selected quote asset.</p>{pairError && <p className="error">{pairError}. SOL remains available while the catalog reconnects.</p>}</> : <><PairPicker key="pumpfun-pairs" id="pump-pair" label="Pump.fun quote pair" venue="pumpfun" pairs={pumpPairs} value={pumpPairMint} onChange={setPumpPairMint} /><p className="notice">{pumpPairs.length} official Pump.fun pairs. Search by ticker, name, or mint address. Rewards use the selected quote asset.</p></>}
       </div>
       <div className="form-section">
+        <div className="field"><label htmlFor="devBuyAmount">Dev buy (optional) · {selectedPair.symbol}</label><input id="devBuyAmount" name="devBuyAmount" inputMode="decimal" maxLength={60} placeholder="0" value={devBuyAmount} onChange={(event) => setDevBuyAmount(event.target.value)} pattern="[0-9]+(\.[0-9]+)?" aria-describedby="dev-buy-help" /></div>
+        <p className="notice" id="dev-buy-help">Maximum {selectedPair.symbol} to spend on your first purchase, including trading fees. Tokens go directly to your connected creator wallet. Launch and buy complete together or neither completes. Leave blank for no buy. {venue === "stonkfun" && selectedPair.mint === SOL_MINT ? "The transaction wraps this SOL amount into WSOL for Stonk." : selectedPair.mint !== SOL_MINT ? `Your wallet must already hold ${selectedPair.symbol}; network fees and rent are additional SOL.` : "Network fees and rent are additional SOL."}</p>
+      </div>
+      <div className="form-section">
         <div className="section-label">TopBlast rewards</div>
         <h3>Fund the blast zone.</h3>
         <p className="notice">Eligible holders below their verified average entry can share this launch’s funded reward pool. Pump uses per-mint fee sharing; new Stonk launches use separate fee wallets. The worker applies your split only to confirmed funding. Unfunded rewards are never allocated.</p>
@@ -360,10 +369,10 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
           <p className="notice">Your selected fee split: <strong>{prepared.review.creatorShare.topblastPercent}% holder rewards / {prepared.review.creatorShare.creatorPercent}% creator.</strong> These are the only allocation percentages shown in the launch flow, and they total 100%.</p>
           <p className="notice">Epoch release: {EPOCH_RELEASE_PERCENT}% of the available holder-reward balance is reserved for each eligible epoch. {100 - EPOCH_RELEASE_PERCENT}% carries forward inside this launch. No funded balance means no payout.</p>
           <p className="notice">Reward asset: {prepared.review.quoteSymbol}. Reward treasury: <span className="mono">{prepared.rewardTreasury ?? "Unavailable. Do not approve until verified."}</span>. Protocol treasury: <span className="mono">{prepared.protocolTreasury ?? "Unavailable. Do not approve until verified."}</span>.</p>
-          <p className="notice"><strong>Permanent configuration:</strong> the selected holder / creator split and token metadata are fixed at launch. {prepared.review.venue === "stonkfun" ? "The onchain creator-fee recipient is this token’s dedicated TopBlast wallet. The worker transfers confirmed funding into this launch’s ledger before sending creator and eligible-holder payouts. Stonk’s forwarding threshold still applies." : "Pump is beta. After creation, the worker locks this mint to Pump.fun’s official per-mint fee-sharing config. Only finalized distributions for this mint fund rewards. No initial buy, cashback, mayhem, or PumpSwap graduation support."}</p>
+          {prepared.raw?.devBuy ? <div className="notice"><strong>Dev buy: up to {prepared.raw.devBuy.amount} {prepared.review.quoteSymbol}</strong><p>Recipient: <span className="mono">{prepared.raw.devBuy.recipient}</span><br />Minimum received: {formatTokenAtoms(prepared.raw.devBuy.minimumTokenAtoms, prepared.raw.devBuy.tokenDecimals)} ${prepared.review.symbol}. The quote-asset cap includes trading fees; SOL network fees and rent are additional. This purchase is not reward-pool funding.</p></div> : <p className="notice">Dev buy: none.</p>}
+          <p className="notice"><strong>Permanent configuration:</strong> the selected holder / creator split and token metadata are fixed at launch. {prepared.review.venue === "stonkfun" ? "The onchain creator-fee recipient is this token’s dedicated TopBlast wallet. The worker transfers confirmed funding into this launch’s ledger before sending creator and eligible-holder payouts. Stonk’s forwarding threshold still applies." : "Pump is beta. After creation, the worker locks this mint to Pump.fun’s official per-mint fee-sharing config. Only finalized distributions for this mint fund rewards. Optional atomic dev buy. No cashback, mayhem, or PumpSwap graduation support."}</p>
           {prepared.raw?.receiverId && <p className="notice">Dedicated fee wallet: <span className="mono">{prepared.raw.feeRecipient}</span>. TopBlast supplies a one-time 0.01 SOL operating top-up after finalization. This is gas, not reward funding. Funds sent to this dedicated wallet are attributed only to this launch.</p>}
-          {prepared.review.venue === "pumpfun" && <p className="notice">Shown SOL cost is the simulated debit for network fees and account creation. No initial buy. Creator fees follow Pump.fun’s schedule and are distributed in {prepared.review.quoteSymbol}.</p>}
-          {prepared.raw?.creationMethod === "stonk_launchlab" && <p className="notice">StonkFun standard launch through its published LaunchLab configuration. Shown SOL cost covers simulated network fees and account rent, not an initial buy or reward funding. Stonk’s token listing may take time to appear.</p>}
+          <p className="notice">Shown SOL debit includes fees, rent and any SOL-funded dev buy. A non-SOL dev buy additionally spends the selected quote asset shown above. Nothing here is a reward-pool deposit.</p>
           {prepared.raw?.venueFees && <p className="notice">Venue trading fees: {((Number(prepared.raw.venueFees.protocolRate) + Number(prepared.raw.venueFees.platformRate) + Number(prepared.raw.venueFees.creatorRate)) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% total, including {(Number(prepared.raw.venueFees.creatorRate) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% creator fee. For Stonk launches, the selected holder / creator split applies to each verified creator-fee transfer received by the launch treasury.</p>}
           <p className="notice">Network: Solana mainnet. Fee payer: <span className="mono">{wallet?.address}</span>. Estimated SOL debit: {prepared.payment.sol ?? prepared.payment.lamports ?? "See wallet"} {prepared.payment.sol !== undefined ? "SOL" : "lamports"}. Launch program: <span className="mono">{prepared.payment.recipient ?? "Shown by your wallet"}</span>.</p>
           <p className="notice">{prepared.expiresAt && new Date(prepared.expiresAt).getTime() <= now ? "Review expired. Prepare a fresh review before signing." : `Estimated signing window: ${prepared.expiresAt ? Math.max(0, Math.ceil((new Date(prepared.expiresAt).getTime() - now) / 1000)) + " seconds" : "limited"}. Review now, then approve promptly in your wallet. Solana block height determines actual expiry.`}</p>

@@ -4,6 +4,9 @@ import { ComputeBudgetProgram, PublicKey, Transaction } from "@solana/web3.js";
 import { getAdminDb } from "@/lib/db/server";
 import { solanaRpc } from "@/lib/solana/rpc";
 import { launchReviewExpiry } from "@/lib/solana/launch-expiry";
+import { devBuyAtoms, type DevBuyReview } from "@/lib/solana/dev-buy";
+import { preparePumpDevBuy } from "@/lib/solana/pump-dev-buy";
+import { serializeLaunchTransaction } from "@/lib/solana/launch-wire";
 import { PUMP_SOL_MINT, PUMP_PROGRAM_ID, readPumpCurve, pumpCreationAvailable, assertPumpMainnet, inspectPumpQuoteMint } from "@/lib/solana/pumpfun";
 import { listOfficialPumpPairs, officialPumpPair } from "./pump-pairs";
 import { broadcastSignedCheckedTransfer } from "@/lib/solana/checked-transfers";
@@ -25,6 +28,13 @@ export function validatePumpImage(data: string) {
 export class PumpFunAdapter implements LaunchVenueAdapter {
   readonly venue = "pumpfun";
   async createLaunch(input: LaunchDraft): Promise<PreparedLaunch> {
+    const result = await this.simulateLaunch(input);
+    const { error } = await getAdminDb().from("launch_metadata").insert(result.metadata);
+    if (error) throw error;
+    return result.prepared;
+  }
+  // Read-only builder for acceptance checks. Never persists, signs or submits.
+  async simulateLaunch(input: LaunchDraft) {
     if (!input.pumpMint) throw new Error("Pump.fun requires a browser-generated mint address");
     if (!await pumpCreationAvailable()) throw new Error("Pump.fun has disabled token creation. Try again when the venue reopens it.");
     validatePumpImage(input.logo);
@@ -38,17 +48,18 @@ export class PumpFunAdapter implements LaunchVenueAdapter {
     const origin = new URL(process.env.NEXT_PUBLIC_APP_URL ?? "https://topblast-stonkfun-launchpad.vercel.app").origin;
     const uri = `${origin}/api/metadata/${metadataId}`;
     const metadata = { name: input.name, symbol: input.symbol, description: input.description, image: `${uri}?image=1`, external_url: input.website, twitter: input.twitter, telegram: input.telegram };
-    const { error } = await getAdminDb().from("launch_metadata").insert({ id: metadataId, metadata, image_data: input.logo });
-    if (error) throw error;
     const pair = await this.getPair(input.quoteMint);
     if (!pair?.launchable) throw new Error("This pair is not currently supported for Pump.fun creation");
     const quote = await inspectPumpQuoteMint(input.quoteMint);
+    const buyAtoms = devBuyAtoms(input.devBuyAmount, quote.decimals);
+    const initialBuy = buyAtoms > 0n ? await preparePumpDevBuy({ user, mint, creator: feeRecipient, quoteMint: new PublicKey(input.quoteMint), quoteTokenProgram: quote.tokenProgram, amount: input.devBuyAmount!, atoms: buyAtoms, decimals: quote.decimals }) : null;
     const create = await PUMP_SDK.createV2Instruction({ mint, name: input.name, symbol: input.symbol, uri, creator: feeRecipient, user, mayhemMode: false, cashback: false, holderReward: false, ...(input.quoteMint === PUMP_SOL_MINT ? {} : { quoteMint: new PublicKey(input.quoteMint), quoteTokenProgram: quote.tokenProgram }) });
     const latest = await solanaRpc<{ context: { slot: number }; value: { blockhash: string; lastValidBlockHeight: number } }>("getLatestBlockhash", [{ commitment: "confirmed" }]);
     if (!Number.isSafeInteger(latest.context?.slot)) throw new Error("Launch blockhash context unavailable");
     const transaction = new Transaction({ feePayer: user, recentBlockhash: latest.value.blockhash })
-      .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }), create);
-    const wire = transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64");
+      .add(ComputeBudgetProgram.setComputeUnitLimit({ units: initialBuy ? 600_000 : 400_000 }), create);
+    if (initialBuy) transaction.add(...initialBuy.instructions);
+    const wire = await serializeLaunchTransaction(transaction, PUMP_PROGRAM_ID.toBase58());
     const before = await solanaRpc<{ context: { slot: number }; value: number }>("getBalance", [input.creatorWallet, { commitment: "confirmed", minContextSlot: latest.context.slot }]);
     if (!Number.isSafeInteger(before.value) || !Number.isSafeInteger(before.context?.slot)) throw new Error("Cannot verify creator balance for simulation");
     const simulated = await solanaRpc<{ context: { slot: number }; value: { err: unknown; accounts?: Array<{ lamports: number } | null> } }>("simulateTransaction", [wire, { encoding: "base64", commitment: "confirmed", minContextSlot: Math.max(before.context.slot, latest.context.slot), sigVerify: false, accounts: { encoding: "base64", addresses: [input.creatorWallet] } }]);
@@ -60,7 +71,8 @@ export class PumpFunAdapter implements LaunchVenueAdapter {
     if (!Number.isSafeInteger(after) || after! < 0 || after! >= before.value) throw new Error("Cannot verify Pump.fun creation cost");
     const lamports = String(before.value - after!);
     const expiresAt = await launchReviewExpiry(latest.value.lastValidBlockHeight);
-    return { signedQuote: JSON.stringify({ venue: this.venue, mint: input.pumpMint, pool: bondingCurvePda(mint).toBase58(), quoteMint: input.quoteMint, feeRecipient: feeRecipient.toBase58(), metadataId, lastValidBlockHeight: latest.value.lastValidBlockHeight }), paymentTransaction: wire, payment: { lamports, sol: Number(lamports) / 1e9, recipient: PUMP_PROGRAM_ID.toBase58() }, expiresAt, raw: { fundingMode: "pump_per_mint_fee_sharing", rewardAsset: input.quoteSymbol, feeRecipient: feeRecipient.toBase58(), nativeHolderRewards: false, simulation: "passed", costDescription: "Simulated SOL debit including network fee and account creation. No initial token purchase. TopBlast activates the official per-mint Pump fee-sharing route after finalization." } };
+    const prepared: PreparedLaunch = { signedQuote: JSON.stringify({ venue: this.venue, mint: input.pumpMint, pool: bondingCurvePda(mint).toBase58(), quoteMint: input.quoteMint, feeRecipient: feeRecipient.toBase58(), metadataId, devBuy: initialBuy?.devBuy, lastValidBlockHeight: latest.value.lastValidBlockHeight }), paymentTransaction: wire, payment: { lamports, sol: Number(lamports) / 1e9, recipient: PUMP_PROGRAM_ID.toBase58() }, expiresAt, raw: { fundingMode: "pump_per_mint_fee_sharing", rewardAsset: input.quoteSymbol, feeRecipient: feeRecipient.toBase58(), nativeHolderRewards: false, simulation: "passed", devBuy: initialBuy?.devBuy, costDescription: "Simulated SOL debit including fees, rent and any native-SOL dev buy. Non-SOL dev buys additionally spend the reviewed quote asset. TopBlast activates per-mint fee sharing after finalization." } };
+    return { prepared, metadata: { id: metadataId, metadata, image_data: input.logo } };
   }
   async submitLaunch(input: { signedQuote: string; signedTransaction: string; logo: string }): Promise<SubmittedLaunch> {
     // The shared submission service has already bound and validated this exact message.
@@ -71,13 +83,13 @@ export class PumpFunAdapter implements LaunchVenueAdapter {
     await assertPumpMainnet();
     const { data: receipt, error } = await getAdminDb().from("launch_submission_receipts").select("signed_quote,signed_payment_transaction").eq("payment_signature", signature).single();
     if (error) throw error;
-    const quote = JSON.parse(receipt.signed_quote) as { venue: string; mint: string; pool: string; feeRecipient?: string; lastValidBlockHeight: number };
+    const quote = JSON.parse(receipt.signed_quote) as { venue: string; mint: string; pool: string; feeRecipient?: string; devBuy?: DevBuyReview; lastValidBlockHeight: number };
     if (quote.venue !== this.venue) throw new Error("Pump.fun receipt venue mismatch");
     const tx = await solanaRpc<{ slot: number; meta: { err: unknown } | null; transaction: [string, string] } | null>("getTransaction", [signature, { commitment: "finalized", encoding: "base64", maxSupportedTransactionVersion: 0 }]);
     if (tx) {
       if (!tx.meta) throw new Error("Pump.fun transaction metadata unavailable");
       if (tx.transaction[0] !== receipt.signed_payment_transaction) throw new Error("Pump.fun finalized transaction does not match the receipt");
-      return { status: tx.meta.err ? "failed" : "completed", paymentSignature: signature, mint: quote.mint, pool: quote.pool, signature, raw: { slot: tx.slot, error: tx.meta.err, feeRecipient: quote.feeRecipient } };
+      return { status: tx.meta.err ? "failed" : "completed", paymentSignature: signature, mint: quote.mint, pool: quote.pool, signature, raw: { slot: tx.slot, error: tx.meta.err, feeRecipient: quote.feeRecipient, devBuy: quote.devBuy } };
     }
     const height = await solanaRpc<number>("getBlockHeight", [{ commitment: "finalized" }]);
     const status = await solanaRpc<{ value: Array<{ err: unknown; confirmationStatus: string } | null> }>("getSignatureStatuses", [[signature], { searchTransactionHistory: true }]);

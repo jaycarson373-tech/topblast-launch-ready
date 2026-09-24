@@ -32,6 +32,14 @@ function buyWithEphemeralQuoteAccount(): FinalizedBlockTransaction {
 }
 
 describe("finalized LaunchLab decoder", () => {
+  it("tracks an atomic first buy without treating the pool's initial minted supply as a wallet purchase", () => {
+    const tx = buy();
+    tx.meta!.preTokenBalances = tx.meta!.preTokenBalances!.filter(b => b.accountIndex !== 1);
+    tx.meta!.innerInstructions![0].instructions.unshift({ programId: token22, stackHeight: 2, parsed: { type: "mintTo", info: { mint: "base", account: "base-vault", amount: "1000" } } });
+    expect(decodeFinalizedLaunchLabTransaction(tx, market, 50n).events).toEqual([{ kind: "verified_buy", launchId: "launch-a", wallet: payer, tokenRaw: 50n, quoteAtoms: 100n, slot: 50n }]);
+    tx.meta!.innerInstructions![0].instructions[0].parsed!.info!.account = baseUser;
+    expect(() => decodeFinalizedLaunchLabTransaction(tx, market, 50n)).toThrow();
+  });
   it("establishes exact basis only for a validated pool buy", () => {
     expect(decodeFinalizedLaunchLabTransaction(buy(), market, 50n).events).toEqual([{ kind: "verified_buy", launchId: "launch-a", wallet: payer, tokenRaw: 50n, quoteAtoms: 100n, slot: 50n }]);
   });

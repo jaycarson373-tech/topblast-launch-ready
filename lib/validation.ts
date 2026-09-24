@@ -33,6 +33,7 @@ export const launchDraftSchema = z.object({
     try { address(value); return true; } catch { return false; }
   }, "Invalid quote mint"),
   quoteSymbol: z.string().min(1).max(12),
+  devBuyAmount: z.string().max(60).regex(/^(0|[1-9]\d*)(\.\d+)?$/, "Enter a non-negative dev-buy amount").default("0"),
   website: optionalHttpsUrl,
   twitter: optionalHttpsUrl,
   telegram: optionalHttpsUrl,

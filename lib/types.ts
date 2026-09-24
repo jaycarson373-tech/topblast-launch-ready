@@ -25,6 +25,7 @@ export interface LaunchDraft {
   logo: string;
   quoteMint: string;
   quoteSymbol: string;
+  devBuyAmount?: string;
   website?: string;
   twitter?: string;
   telegram?: string;

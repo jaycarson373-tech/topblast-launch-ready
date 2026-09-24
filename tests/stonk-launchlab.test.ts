@@ -69,6 +69,17 @@ beforeEach(() => {
 const receipt = () => ({ signed_quote: JSON.stringify({ venue: "stonkfun", method: "launchlab", mint: address(), pool: address(), lastValidBlockHeight: 200 }), signed_payment_transaction: "original-signed-bytes" });
 
 describe("Stonk's supported LaunchLab flow, simulated RPC only", () => {
+  it("adds the dev buy to the same transaction and binds delivery to the creator, not the fee wallet", async () => {
+    const input = { ...draft(), devBuyAmount: "0.001" };
+    const verified = await verifyStonkPricing(pricing(), quoteMint);
+    const prepared = await prepareStonkLaunch(input, verified);
+    const tx = Transaction.from(Buffer.from(prepared.paymentTransaction, "base64"));
+    expect(tx.instructions).toHaveLength(5);
+    expect(tx.instructions.at(-1)?.programId.toBase58()).toBe(LAUNCHLAB_PROGRAM);
+    expect(prepared.raw.devBuy).toMatchObject({ recipient: input.creatorWallet, quoteAtoms: "1000000", quoteMint });
+    expect(JSON.parse(prepared.signedQuote).devBuy).toEqual(prepared.raw.devBuy);
+    expect(mocks.broadcast).not.toHaveBeenCalled();
+  });
   it("builds an unsigned two-signer Token-2022 launch on Stonk's platform with no tax", async () => {
     const input = draft(), verified = await verifyStonkPricing(pricing(), quoteMint);
     expect(verified.token2022).toBe(true);

@@ -26,6 +26,18 @@ interface Balance { mint: string; owner: string; program: string; pre: bigint; p
 interface Transfer { source: string; destination: string; from: string; to: string; mint: string; amount: bigint; sequence: number; context: SwapContext | null }
 interface SwapContext { side: "buy" | "sell"; payer: string; input: string; output: string; transfers: Transfer[] }
 
+// Creation can mint the initial pool inventory in the same transaction as a
+// first buy. Reconcile that issuance only at the verified pool vault. It never
+// creates a wallet event or purchased basis, and user balances remain exact.
+export function poolMintIssuance(ix: ParsedInstruction, market: Pick<LaunchLabDecoderMarket, "baseTokenProgram" | "baseMint" | "baseVault">): bigint {
+  if (ix.programId !== market.baseTokenProgram || !["mintTo", "mintToChecked"].includes(ix.parsed?.type ?? "")) return 0n;
+  const info = ix.parsed?.info;
+  if (info?.mint !== market.baseMint || info.account !== market.baseVault) return 0n;
+  const amount = info.amount ?? (info.tokenAmount as { amount?: unknown } | undefined)?.amount;
+  if (typeof amount !== "string" || !/^[1-9]\d*$/.test(amount)) throw new Error("Pool supply issuance amount is not exact");
+  return BigInt(amount);
+}
+
 export function decode58(value: string) {
   let number = 0n;
   for (const character of value) { const digit = ALPHABET.indexOf(character); if (digit < 0) throw new Error("Invalid base58 instruction data"); number = number * 58n + BigInt(digit); }
@@ -69,7 +81,9 @@ export function decodeFinalizedLaunchLabTransaction(tx: FinalizedBlockTransactio
   const contexts: SwapContext[] = [];
   const transfers: Transfer[] = [];
   let sequence = 0;
+  let poolIssuance = 0n;
   function visit(instruction: ParsedInstruction, active: SwapContext | null) {
+    poolIssuance += poolMintIssuance(instruction, market);
     if (!instruction.programId || !TOKEN_PROGRAMS.has(instruction.programId) || !instruction.parsed) return;
     const info = instruction.parsed.info ?? {};
     if (!["transfer", "transferChecked"].includes(instruction.parsed.type ?? "")) return;
@@ -118,7 +132,7 @@ export function decodeFinalizedLaunchLabTransaction(tx: FinalizedBlockTransactio
     if (![market.authorityAddress, market.marketAddress].includes(transfer.to)) events.push({ kind: "incoming_transfer", launchId: market.launchId, wallet: transfer.to, tokenRaw: transfer.amount, slot, order: transfer.sequence });
   }
   for (const [account, balance] of balances) if (balance.mint === market.baseMint) {
-    const predicted = transfers.reduce((sum, item) => sum + (item.destination === account ? item.amount : 0n) - (item.source === account ? item.amount : 0n), 0n);
+    const predicted = transfers.reduce((sum, item) => sum + (item.destination === account ? item.amount : 0n) - (item.source === account ? item.amount : 0n), account === market.baseVault ? poolIssuance : 0n);
     if (predicted !== balance.post - balance.pre) throw new Error("Parsed transfers do not reconcile to finalized token balances");
   }
   return { signature, events: events.sort((a, b) => a.order - b.order).map((item): PositionEvent => item.kind === "verified_buy"
