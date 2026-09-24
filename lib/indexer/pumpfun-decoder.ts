@@ -1,4 +1,4 @@
-import { pumpIdl, PUMP_SDK, PUMP_PROGRAM_ID, PUMP_EVENT_AUTHORITY_PDA, GLOBAL_PDA, creatorVaultPda, type TradeEventBc } from "@/lib/solana/pump-sdk";
+import { pumpIdl, PUMP_SDK, PUMP_PROGRAM_ID, PUMP_EVENT_AUTHORITY_PDA, GLOBAL_PDA, creatorVaultPda, feeSharingConfigPda, type TradeEventBc } from "@/lib/solana/pump-sdk";
 import { PublicKey } from "@solana/web3.js";
 import { PUMP_SOL_MINT } from "@/lib/solana/pumpfun";
 import { decode58, type FinalizedBlockTransaction, type LaunchLabDecoderMarket } from "./launchlab-decoder";
@@ -6,7 +6,7 @@ import type { PositionEvent } from "@/lib/rewards/position";
 
 type Ix = FinalizedBlockTransaction["transaction"]["message"]["instructions"][number];
 type Movement = { source: string; destination: string; amount: bigint; order: number; swap: Swap | null };
-type Swap = { user: string; userToken: string; userQuoteToken?: string; buy: boolean; event?: TradeEventBc; quoteIn: bigint; depth: number };
+type Swap = { user: string; userToken: string; userQuoteToken?: string; creator: string; buy: boolean; event?: TradeEventBc; quoteIn: bigint; depth: number };
 const swapNames = new Set(["buy", "buy_exact_sol_in", "buy_v2", "buy_exact_quote_in_v2", "sell", "sell_v2"]);
 const definitions = pumpIdl.instructions.filter((ix) => swapNames.has(ix.name));
 const eventTag = Buffer.from([189,219,127,211,78,230,97,238]);
@@ -30,6 +30,9 @@ export function decodeFinalizedPumpTransaction(tx: FinalizedBlockTransaction, ma
     balances.set(address, { owner: row.owner, pre: previous?.pre ?? 0n, post: previous?.post ?? 0n, [phase]: BigInt(row.uiTokenAmount.amount) });
   }
   const swaps: Swap[] = [], movements: Movement[] = [];
+  // The original creator remains immutable in the ledger. Pump can move fees
+  // to this mint's deterministic sharing PDA without invalidating earlier buys.
+  const creators = [market.creatorAddress, feeSharingConfigPda(new PublicKey(market.baseMint)).toBase58()];
   function visit(ix: Ix, inherited: Swap | null, depth: number): Swap | null {
     let active = inherited;
     if (ix.programId === PUMP_PROGRAM_ID.toBase58() && ix.data) {
@@ -38,20 +41,21 @@ export function decodeFinalizedPumpTransaction(tx: FinalizedBlockTransaction, ma
       if (definition) {
         const account = Object.fromEntries(definition.accounts.map((row, index) => [row.name, ix.accounts?.[index]]));
         if ((account.base_mint ?? account.mint) !== market.baseMint) return null;
-        if (account.bonding_curve !== market.marketAddress || (account.associated_base_bonding_curve ?? account.associated_bonding_curve) !== market.baseVault || (account.base_token_program ?? account.token_program) !== market.baseTokenProgram || account.global !== GLOBAL_PDA.toBase58() || account.creator_vault !== creatorVaultPda(new PublicKey(market.creatorAddress)).toBase58() || account.program !== PUMP_PROGRAM_ID.toBase58() || account.event_authority !== PUMP_EVENT_AUTHORITY_PDA.toBase58()) throw new Error("Pump.fun swap market identity mismatch");
+        const creator = creators.find(address => account.creator_vault === creatorVaultPda(new PublicKey(address)).toBase58());
+        if (!creator || account.bonding_curve !== market.marketAddress || (account.associated_base_bonding_curve ?? account.associated_bonding_curve) !== market.baseVault || (account.base_token_program ?? account.token_program) !== market.baseTokenProgram || account.global !== GLOBAL_PDA.toBase58() || account.program !== PUMP_PROGRAM_ID.toBase58() || account.event_authority !== PUMP_EVENT_AUTHORITY_PDA.toBase58()) throw new Error("Pump.fun swap market identity mismatch");
         if (account.quote_mint && account.quote_mint !== market.quoteMint) throw new Error("Pump.fun swap quote mismatch");
         if (account.quote_token_program && account.quote_token_program !== market.quoteTokenProgram) throw new Error("Pump.fun swap quote program mismatch");
         if (market.quoteMint !== PUMP_SOL_MINT && account.associated_quote_bonding_curve !== market.quoteVault) throw new Error("Pump.fun swap quote vault mismatch");
         if (!account.user || !signers.has(account.user)) throw new Error("Pump.fun buyer is not a verified signer");
         const userToken = account.associated_base_user ?? account.associated_user;
         if (!userToken || balances.get(userToken)?.owner !== account.user) throw new Error("Pump.fun user token account mismatch");
-        active = { user: account.user, userToken, userQuoteToken: account.associated_quote_user, buy: definition.name.startsWith("buy"), quoteIn: 0n, depth };
+        active = { user: account.user, userToken, creator, userQuoteToken: account.associated_quote_user, buy: definition.name.startsWith("buy"), quoteIn: 0n, depth };
         swaps.push(active);
       } else if (bytes.subarray(0, 8).equals(cpiTag) && bytes.subarray(8, 16).equals(eventTag)) {
         if (!active || depth !== active.depth + 1 || ix.accounts?.[0] !== PUMP_EVENT_AUTHORITY_PDA.toBase58()) throw new Error("Unattributed Pump.fun event");
         if (active.event) throw new Error("Duplicate Pump.fun trade event within swap");
         const event = PUMP_SDK.decodeTradeEventBc(bytes.subarray(16));
-        if (event.mint.toBase58() !== market.baseMint || event.user.toBase58() !== active.user || event.isBuy !== active.buy || event.creator.toBase58() !== market.creatorAddress || event.mayhemMode || !event.holderRewards.isZero()) throw new Error("Pump.fun trade event identity mismatch");
+        if (event.mint.toBase58() !== market.baseMint || event.user.toBase58() !== active.user || event.isBuy !== active.buy || event.creator.toBase58() !== active.creator || event.mayhemMode || !event.holderRewards.isZero()) throw new Error("Pump.fun trade event identity mismatch");
         const eventQuote = event.quoteMint.equals(PublicKey.default) ? PUMP_SOL_MINT : event.quoteMint.toBase58();
         if (eventQuote !== market.quoteMint) throw new Error("Pump.fun event quote mismatch");
         active.event = event;

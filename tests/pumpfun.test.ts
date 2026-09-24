@@ -47,6 +47,19 @@ describe("Pump.fun verified trade boundary", () => {
     const { tx, market, user } = fixture();
     expect(decodeFinalizedPumpTransaction(tx, market, 100n).events).toEqual([{ kind: "verified_buy", launchId: "launch-a", wallet: user, tokenRaw: 100n, quoteAtoms: 500n, slot: 100n }]);
   });
+  it("retains pre-sharing buys and verifies post-sharing buys against the same mint", () => {
+    const { tx, market } = fixture();
+    expect(decodeFinalizedPumpTransaction(tx, market, 100n).events).toHaveLength(1);
+    const event = PUMP_SDK.decodeTradeEventBc(Buffer.alloc(0));
+    const sharing = feeSharingConfigPda(new PublicKey(market.baseMint));
+    tx.transaction.message.instructions[0].accounts![9] = creatorVaultPda(sharing).toBase58();
+    vi.mocked(PUMP_SDK.decodeTradeEventBc).mockReturnValue({ ...event, creator: sharing });
+    expect(decodeFinalizedPumpTransaction(tx, market, 110n).events).toHaveLength(1);
+    vi.mocked(PUMP_SDK.decodeTradeEventBc).mockReturnValue(event);
+    expect(() => decodeFinalizedPumpTransaction(tx, market, 110n)).toThrow("event identity");
+    tx.transaction.message.instructions[0].accounts![9] = creatorVaultPda(feeSharingConfigPda(new PublicKey(key()))).toBase58();
+    expect(() => decodeFinalizedPumpTransaction(tx, market, 110n)).toThrow("market identity");
+  });
   it("keeps the same wallet and another mint isolated", () => {
     const { tx, market } = fixture();
     expect(decodeFinalizedPumpTransaction(tx, { ...market, launchId: "launch-b", baseMint: key(), marketAddress: key() }, 100n).events).toEqual([]);

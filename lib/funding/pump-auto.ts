@@ -150,8 +150,6 @@ async function reconcileOperation(db: SupabaseClient, row: Operation, market: Pu
     const { curve } = await readPumpCurve(market.base_mint, market.market_address);
     if (!curve.creator.equals(sharing)) throw new Error("Pump curve creator did not migrate to its fee-sharing config");
     proof = { ...proof, type: "pump_fee_setup", mint: market.base_mint, sharingConfig: sharing.toBase58(), treasury: treasury.toBase58() };
-    const marketUpdate = await db.from("tracked_markets").update({ creator_address: sharing.toBase58(), updated_at: new Date().toISOString(), tracker_error: null }).eq("launch_id", market.launch_id);
-    if (marketUpdate.error) throw marketUpdate.error;
     const setupProof = await db.from("transaction_proofs").upsert({ launch_id: market.launch_id, kind: "fee_claim", signature, slot: exact.slot, payload: proof, idempotency_key: `pump-setup:${market.launch_id}` }, { onConflict: "idempotency_key", ignoreDuplicates: true });
     if (setupProof.error) throw setupProof.error;
   } else {
@@ -231,11 +229,6 @@ export async function processPumpCreatorFees(db: SupabaseClient, market: PumpMar
   }
   if (!curve.creator.equals(sharing) || !loaded) throw new Error("Pump creator is not the TopBlast treasury or the launch's fee-sharing config");
   assertTreasuryConfig(mint, treasury, loaded);
-  if (market.creator_address !== sharing.toBase58()) {
-    const update = await db.from("tracked_markets").update({ creator_address: sharing.toBase58(), updated_at: new Date().toISOString(), tracker_error: null }).eq("launch_id", market.launch_id);
-    if (update.error) throw update.error;
-    market.creator_address = sharing.toBase58();
-  }
   if (!await creditConfirmedDistributions(db, market)) return { status: "awaiting_index" };
 
   const existing = await db.from("pump_fee_operations").select("*").eq("launch_id", market.launch_id).eq("kind", "distribute").in("status", ["planned", "prepared"]).order("created_at").limit(1).maybeSingle();

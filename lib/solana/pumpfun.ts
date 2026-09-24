@@ -67,7 +67,7 @@ export async function inspectPumpMarket(input: { mint: string; pool: string; quo
 export async function observePumpPrice(market: { marketAddress: string; baseMint: string; quoteMint: string; creatorAddress: string; tokenDecimals: number }) {
   const { curve, slot } = await readPumpCurve(market.baseMint, market.marketAddress);
   if (normalizedPumpQuote(curve.quoteMint).toBase58() !== market.quoteMint) throw new Error("Pump.fun price quote mint changed");
-  if (curve.creator.toBase58() !== market.creatorAddress) throw new Error("Pump.fun price creator changed");
+  if (![market.creatorAddress, feeSharingConfigPda(new PublicKey(market.baseMint)).toBase58()].includes(curve.creator.toBase58())) throw new Error("Pump.fun price creator changed");
   const base = BigInt(curve.virtualTokenReserves.toString()), quote = BigInt(curve.virtualQuoteReserves.toString());
   if (base <= 0n || quote <= 0n) throw new Error("Invalid Pump.fun virtual reserves");
   const blockTime = await solanaRpc<number | null>("getBlockTime", [slot]);
