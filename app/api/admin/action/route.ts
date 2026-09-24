@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/db/server";
 import { getTreasuryBalance, solanaRpc } from "@/lib/solana/rpc";
+import { getLaunchWallet } from "@/lib/payout/launch-wallet";
 
 function authorized(request: Request) {
   const expected = process.env.ADMIN_API_TOKEN;
@@ -88,7 +89,8 @@ export async function POST(request: Request) {
     if (allocations.some((row) => row.launch_id !== epoch.launch_id)) return NextResponse.json({ error: "Cross-launch contamination detected" }, { status: 409 });
     const totalAtoms = allocations.reduce((sum, row) => sum + BigInt(row.amount_atoms), 0n);
     if (totalAtoms > BigInt(epoch.funded_budget_atoms)) return NextResponse.json({ error: "Manifest exceeds funded epoch budget" }, { status: 409 });
-    const manifest = { version: 1, cluster: "solana:mainnet", epochId: epoch.id, launchId: epoch.launch_id, rewardAssetMint: epoch.reward_asset_mint, treasuryAddress: process.env.TOPBLAST_TREASURY_ADDRESS ?? null, totalAtoms: totalAtoms.toString(), allocations: allocations.map((row) => ({ wallet: row.wallet, amountAtoms: String(row.amount_atoms) })) };
+    const payoutWallet = await getLaunchWallet(db, epoch.launch_id);
+    const manifest = { version: 1, cluster: "solana:mainnet", epochId: epoch.id, launchId: epoch.launch_id, rewardAssetMint: epoch.reward_asset_mint, treasuryAddress: payoutWallet.address, totalAtoms: totalAtoms.toString(), allocations: allocations.map((row) => ({ wallet: row.wallet, amountAtoms: String(row.amount_atoms) })) };
     const hash = createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
     return NextResponse.json({ ok: true, dryRun: true, requiresWalletApproval: true, manifestHash: hash, manifest });
   }

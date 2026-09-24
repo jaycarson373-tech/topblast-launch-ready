@@ -1,10 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { broadcastSignedCheckedTransfer, inspectSignedCheckedTransfer, prepareCheckedTransfer, verifyFinalizedSignedTransaction } from "@/lib/solana/checked-transfers";
-import { createRailwaySigner } from "@/lib/payout/railway-signer";
+import { createLaunchSigner } from "@/lib/payout/launch-signer";
+import { getLaunchWallet } from "@/lib/payout/launch-wallet";
 import { solanaRpc } from "@/lib/solana/rpc";
 import { NATIVE_MINT } from "@solana/spl-token";
 
-export type CreatorDistributionResult = { status: "disabled" | "lease_busy" | "idle" | "awaiting_finality" | "submitted" | "confirmed"; id?: string; signature?: string | null };
+export type CreatorDistributionResult = { status: "disabled" | "lease_busy" | "idle" | "awaiting_finality" | "submitted" | "confirmed"; id?: string; signature?: string | null; leasedTreasury?: string };
 
 function enabled(env: NodeJS.ProcessEnv) { return env.PAYOUT_MODE === "server_signer" && env.DRY_RUN === "false"; }
 
@@ -30,15 +31,8 @@ async function reconcile(db: SupabaseClient, row: Record<string, unknown>) {
 
 export async function processCreatorFeeDistribution(db: SupabaseClient, owner: string, env: NodeJS.ProcessEnv = process.env): Promise<CreatorDistributionResult> {
   if (!enabled(env)) return { status: "disabled" };
-  const treasury = env.TOPBLAST_TREASURY_ADDRESS;
-  if (!treasury) throw new Error("TOPBLAST_TREASURY_ADDRESS is required for creator distributions");
-  const signer = createRailwaySigner(env as Record<string, string | undefined>);
-  if (signer.publicKey() !== treasury) throw new Error("TREASURY_PRIVATE_KEY does not match TOPBLAST_TREASURY_ADDRESS");
   const limitText = env.TOPBLAST_MAX_PAYOUT_ATOMS;
   if (!limitText || !/^\d+$/.test(limitText) || BigInt(limitText) <= 0n) throw new Error("TOPBLAST_MAX_PAYOUT_ATOMS must be a positive integer");
-  const lease = await db.rpc("claim_worker_lease", { p_resource_type: "payout_treasury", p_resource_id: treasury, p_owner_id: owner, p_seconds: 60 });
-  if (lease.error) throw lease.error;
-  if (lease.data !== true) return { status: "lease_busy" };
 
   const active = await db.from("creator_fee_distributions").select("*").in("status", ["signed", "submitted", "uncertain"]).order("created_at").limit(1).maybeSingle();
   if (active.error) throw active.error;
@@ -52,6 +46,15 @@ export async function processCreatorFeeDistribution(db: SupabaseClient, owner: s
   if (!next.data) return { status: "idle" };
   const row = next.data;
   if (BigInt(row.amount_atoms) > BigInt(limitText)) throw new Error(`Creator distribution ${row.id} exceeds TOPBLAST_MAX_PAYOUT_ATOMS`);
+  const wallet = await getLaunchWallet(db, row.launch_id, env);
+  if (wallet.status !== "active") throw new Error("This launch is paused; creator distribution is locked");
+  if (wallet.binding.rewardMint !== row.asset_mint) throw new Error("Creator distribution asset does not match this launch");
+  const treasury = wallet.address;
+  if (row.wallet === treasury) throw new Error("A retained creator share cannot be recorded as an external payment to the same wallet");
+  const signer = createLaunchSigner(wallet.binding, env);
+  const lease = await db.rpc("claim_worker_lease", { p_resource_type: "payout_treasury", p_resource_id: treasury, p_owner_id: owner, p_seconds: 60 });
+  if (lease.error) throw lease.error;
+  if (lease.data !== true) return { status: "lease_busy" };
   if (row.status === "planned") {
     const launch = await db.from("launches").select("venue").eq("id", row.launch_id).single();
     if (launch.error) throw launch.error;
@@ -80,5 +83,5 @@ export async function processCreatorFeeDistribution(db: SupabaseClient, owner: s
   await broadcastSignedCheckedTransfer(signed).catch(() => undefined);
   await db.from("creator_fee_distributions").update({ status: "submitted", updated_at: new Date().toISOString() }).eq("id", row.id).eq("status", "signed");
   const final = await reconcile(db, { ...persisted.data, status: "submitted" });
-  return { status: final.status === "confirmed" ? "confirmed" : "submitted", id: row.id, signature: inspected.signature };
+  return { status: final.status === "confirmed" ? "confirmed" : "submitted", id: row.id, signature: inspected.signature, leasedTreasury: treasury };
 }

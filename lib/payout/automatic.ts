@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { preparePayoutBatch, reconcilePayoutBatch, submitPayoutBatch } from "@/lib/payout/service";
 import { createRailwaySigner } from "@/lib/payout/railway-signer";
+import { getLaunchWallet } from "@/lib/payout/launch-wallet";
+import { createLaunchSigner } from "@/lib/payout/launch-signer";
 
 export type AutomaticPayoutResult =
   | { status: "disabled" | "lease_busy" | "idle" }
@@ -37,21 +39,10 @@ export async function processAutomaticPayout(
   db: SupabaseClient,
   owner: string,
   env: NodeJS.ProcessEnv = process.env,
-  treasuryLeaseHeld = false,
+  leasedTreasury?: string,
 ): Promise<AutomaticPayoutResult> {
   if (!automaticPayoutsConfigured(env)) return { status: "disabled" };
-  const treasury = env.TOPBLAST_TREASURY_ADDRESS;
-  if (!treasury) throw new Error("TOPBLAST_TREASURY_ADDRESS is required for automatic payouts");
-  const signer = createRailwaySigner(env as Record<string, string | undefined>);
-  if (signer.publicKey() !== treasury) throw new Error("TREASURY_PRIVATE_KEY does not match TOPBLAST_TREASURY_ADDRESS");
   const limit = payoutLimit(env);
-  if (!treasuryLeaseHeld) {
-    const lease = await db.rpc("claim_worker_lease", {
-      p_resource_type: "payout_treasury", p_resource_id: treasury, p_owner_id: owner, p_seconds: 60,
-    });
-    if (lease.error) throw lease.error;
-    if (lease.data !== true) return { status: "lease_busy" };
-  }
 
   const inFlight = await db.from("payout_batches").select("id,status,signature").in("status", ["signed", "submitted", "uncertain"]).order("created_at", { ascending: true });
   if (inFlight.error) throw inFlight.error;
@@ -65,16 +56,31 @@ export async function processAutomaticPayout(
   let selected = await db.from("payout_batches").select("*").eq("status", "prepared").order("created_at", { ascending: true }).limit(1).maybeSingle();
   if (selected.error) throw selected.error;
   if (!selected.data) {
-    const planned = await db.from("payout_batches").select("id,amount_atoms").eq("status", "planned").order("created_at", { ascending: true }).limit(1).maybeSingle();
+    const planned = await db.from("payout_batches").select("*").eq("status", "planned").order("created_at", { ascending: true }).limit(1).maybeSingle();
     if (planned.error) throw planned.error;
     if (!planned.data) return { status: "idle" };
     if (BigInt(planned.data.amount_atoms) > limit) return { status: "authorization_limit", batchId: planned.data.id, amountAtoms: planned.data.amount_atoms, limitAtoms: limit.toString() };
-    await preparePayoutBatch(planned.data.id);
-    selected = await db.from("payout_batches").select("*").eq("id", planned.data.id).single();
-    if (selected.error) throw selected.error;
+    selected = planned;
   }
-  const batch = selected.data;
+  let batch = selected.data;
   if (BigInt(batch.amount_atoms) > limit) return { status: "authorization_limit", batchId: batch.id, amountAtoms: batch.amount_atoms, limitAtoms: limit.toString() };
+  const wallet = await getLaunchWallet(db, batch.launch_id, env);
+  if (wallet.status !== "active") throw new Error("This launch is paused; automatic payouts are locked");
+  if (wallet.binding.rewardMint !== batch.asset_mint) throw new Error("Payout asset does not match this launch");
+  const treasury = wallet.address;
+  const signer = createLaunchSigner(wallet.binding, env);
+  // A lease inherited from the creator-distribution step covers only the
+  // original platform treasury, never the TOPBLAST creator wallet.
+  if (leasedTreasury !== treasury) {
+    const lease = await db.rpc("claim_worker_lease", {
+      p_resource_type: "payout_treasury", p_resource_id: treasury, p_owner_id: owner, p_seconds: 60,
+    });
+    if (lease.error) throw lease.error;
+    if (lease.data !== true) return { status: "lease_busy" };
+  }
+  if (batch.status === "planned") {
+    batch = await preparePayoutBatch(batch.id);
+  }
   if (!batch.unsigned_transaction || !batch.unsigned_message_hash) throw new Error("Prepared payout is missing the exact transaction bytes");
   const signed = signer.signTransaction({
     transactionBase64: batch.unsigned_transaction,

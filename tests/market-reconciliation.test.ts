@@ -4,6 +4,7 @@ const mock = vi.hoisted(() => ({ rpc: vi.fn(), price: vi.fn() }));
 vi.mock("@/lib/solana/rpc", () => ({ solanaRpc: mock.rpc }));
 vi.mock("@/lib/solana/launchlab", () => ({ observeLaunchLabPrice: mock.price }));
 import { reconcileMarket } from "@/lib/worker/pipeline";
+import * as decoder from "@/lib/indexer/launchlab-decoder";
 const market = { venue: "stonkfun", launch_id: "a", base_mint: "base", quote_mint: "quote", market_address: "pool", base_decimals: 6, quote_decimals: 9, launch_slot: 100, last_indexed_slot: 99, creator_address: "creator", authority_address: "authority", config_address: "config", platform_config_address: "platform", base_vault: "base-vault", quote_vault: "quote-vault", history_complete: false, price_status: "failed", base_token_program: "token", quote_token_program: "token" };
 const irrelevant = { version: 1, meta: { err: null }, transaction: { signatures: ["other"], message: { accountKeys: [{ pubkey: "unrelated", signer: true }], instructions: [], transactionConfig: { priorityFee: 100 } } } };
 function database() {
@@ -15,6 +16,7 @@ function database() {
   return { db: db as unknown as SupabaseClient, writes };
 }
 beforeEach(() => {
+  vi.restoreAllMocks();
   vi.resetAllMocks();
   mock.price.mockResolvedValue({ slot: 100, blockTime: new Date().toISOString(), priceQuoteAtomsPerToken: 42n });
   mock.rpc.mockImplementation(async (method: string, args: unknown[]) => {
@@ -25,6 +27,14 @@ beforeEach(() => {
   });
 });
 describe("finalized market reconciliation", () => {
+  it("sends the launch transaction through the verified decoder so an atomic dev buy is not skipped", async () => {
+    const decode = vi.spyOn(decoder, "decodeFinalizedLaunchLabTransaction");
+    const { db } = database();
+    await reconcileMarket(db, { ...market, launch_signature: "other" }, "worker");
+    expect(decode).toHaveBeenCalledTimes(2);
+    // This fixture has no swap. Passing it to the decoder must not fabricate one.
+    expect(db.rpc).not.toHaveBeenCalledWith("apply_wallet_activity", expect.anything());
+  });
   it("accepts parsed v1 blocks, keeps finality and checkpoints every completed block", async () => {
     const { db, writes } = database();
     expect(await reconcileMarket(db, market, "worker")).toBe(true);

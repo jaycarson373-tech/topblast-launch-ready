@@ -7,6 +7,7 @@ import {
 } from "@/lib/solana/checked-transfers";
 import { solanaRpc } from "@/lib/solana/rpc";
 import { NATIVE_MINT } from "@solana/spl-token";
+import { getLaunchWallet } from "@/lib/payout/launch-wallet";
 
 export async function preparePayoutBatch(batchId: string) {
   const db = getAdminDb();
@@ -17,8 +18,9 @@ export async function preparePayoutBatch(batchId: string) {
   if (launch.status !== "active") throw new Error("This launch is paused; payout preparation is locked");
   if (batch.status === "prepared") return batch;
   if (batch.status !== "planned") throw new Error(`Payout batch is ${batch.status}`);
-  const treasury = process.env.TOPBLAST_TREASURY_ADDRESS;
-  if (!treasury) throw new Error("TOPBLAST_TREASURY_ADDRESS is required");
+  const wallet = await getLaunchWallet(db, batch.launch_id);
+  const treasury = wallet.address;
+  if (wallet.binding.rewardMint !== batch.asset_mint) throw new Error("Payout asset does not match this launch's funded reward asset");
   const manifest = batch.manifest as Array<{ wallet: string; amountAtoms: string }>;
   if (!Array.isArray(manifest) || !manifest.length) throw new Error("Payout manifest is empty");
   const total = manifest.reduce((sum, item) => sum + BigInt(item.amountAtoms), 0n);
@@ -49,8 +51,9 @@ export async function submitPayoutBatch(batchId: string, signedTransaction: stri
   if (launchError) throw launchError;
   if (launch.status !== "active") throw new Error("This launch is paused; payout submission is locked");
   if (batch.status !== "prepared" && !["submitted", "uncertain"].includes(batch.status)) throw new Error(`Payout batch is ${batch.status}`);
-  const treasury = process.env.TOPBLAST_TREASURY_ADDRESS;
-  if (!treasury) throw new Error("TOPBLAST_TREASURY_ADDRESS is required");
+  const wallet = await getLaunchWallet(db, batch.launch_id);
+  const treasury = wallet.address;
+  if (wallet.binding.rewardMint !== batch.asset_mint) throw new Error("Payout asset does not match this launch's funded reward asset");
   const inspected = inspectSignedCheckedTransfer({ signedTransaction, expectedMessageHash: batch.unsigned_message_hash, expectedPayer: treasury });
   if (batch.signature && batch.signature !== inspected.signature) throw new Error("A different transaction is already bound to this payout batch");
   const { error: submitError } = await db.rpc("submit_payout_batch", { p_batch_id: batchId, p_signature: inspected.signature, p_signed_transaction: signedTransaction });

@@ -61,7 +61,9 @@ export async function reconcileMarket(db: SupabaseClient, row: MarketRow, owner:
       }
       if (blockhash && block.previousBlockhash !== blockhash) throw new Error(`Finalized chain continuity failed at slot ${slot}`);
       for (const [transactionIndex, transaction] of block.transactions.entries()) {
-        if (transaction.transaction.signatures[0] === row.launch_signature) continue;
+        // Creation may contain an atomic dev buy. The venue decoder verifies
+        // that buy and keeps initial pool minting separate from wallet basis.
+        // Skipping the entire launch signature silently loses real purchases.
         const decoded = (row.venue === "pumpfun" ? decodeFinalizedPumpTransaction : decodeFinalizedLaunchLabTransaction)(transaction, {
           launchId: row.launch_id, marketAddress: row.market_address, baseMint: row.base_mint, quoteMint: row.quote_mint,
           authorityAddress: row.authority_address, configAddress: row.config_address, platformConfigAddress: row.platform_config_address,
