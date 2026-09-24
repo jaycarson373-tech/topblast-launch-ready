@@ -10,6 +10,7 @@ import type { LaunchDraft } from "@/lib/types";
 const mocks = vi.hoisted(() => ({ rpc: vi.fn(), insert: vi.fn(), broadcast: vi.fn() }));
 vi.mock("@/lib/solana/rpc", () => ({ solanaRpc: mocks.rpc }));
 vi.mock("@/lib/db/server", () => ({ getAdminDb: () => ({ from: () => ({ insert: mocks.insert }) }) }));
+vi.mock("@/lib/db/stonk-receivers", () => ({ reserveStonkReceiver: async () => ({ id: "00000000-0000-4000-8000-000000000001", address: "AeYBHj5vf6P9DPHFcewsLdMp3atNfm1RxZ3gSK49Xo42" }) }));
 vi.mock("@/lib/solana/checked-transfers", () => ({ broadcastSignedCheckedTransfer: mocks.broadcast }));
 const address = () => Keypair.generate().publicKey.toBase58();
 const genesis = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";

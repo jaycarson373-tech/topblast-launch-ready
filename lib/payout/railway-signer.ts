@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import { decode58 } from "@/lib/indexer/launchlab-decoder";
 import { inspectSignedMessage } from "@/lib/solana/signed-message";
@@ -24,12 +24,23 @@ export function parseTreasurySecret(value: string | undefined) {
   return bytes;
 }
 
-export function createRailwaySigner(env: Record<string, string | undefined> = process.env as Record<string, string | undefined>) {
+export function createRailwaySigner(env: Record<string, string | undefined> = process.env as Record<string, string | undefined>, receiverId?: string) {
+  if (receiverId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(receiverId)) throw new Error("Invalid Stonk receiver derivation ID");
   let signer: Keypair | null = null;
   function getSigner() {
     if (signer) return signer;
     const bytes = parseTreasurySecret(env.TREASURY_PRIVATE_KEY);
-    try { signer = Keypair.fromSecretKey(Uint8Array.from(bytes)); }
+    try {
+      const parent = Keypair.fromSecretKey(Uint8Array.from(bytes));
+      if (receiverId === undefined) signer = parent;
+      else {
+        if (parent.publicKey.toBase58() !== env.TOPBLAST_TREASURY_ADDRESS) throw new Error("Receiver derivation treasury does not match configured signer");
+        // Stable, domain-separated child keys live only inside the worker.
+        // The database stores the UUID/public address, never the derived secret.
+        const seed = createHmac("sha256", parent.secretKey.subarray(0, 32)).update(`topblast:stonk-fee-receiver:v1:${receiverId}`).digest();
+        try { signer = Keypair.fromSeed(seed); } finally { seed.fill(0); parent.secretKey.fill(0); }
+      }
+    }
     finally { bytes.fill(0); }
     return signer;
   }

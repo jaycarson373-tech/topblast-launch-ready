@@ -5,7 +5,6 @@ import { StonkFunAdapter } from "@/lib/venue/stonkfun-adapter";
 import { getTreasuryBalance } from "@/lib/solana/rpc";
 import { pumpCreationAvailable } from "@/lib/solana/pumpfun";
 import { controlledLaunchWallets } from "@/lib/test-launch-access";
-import { STONK_ATTRIBUTION_BLOCKER } from "@/lib/funding/stonk-auto";
 
 export const runtime = "nodejs";
 
@@ -25,8 +24,9 @@ export async function GET() {
   let acceptedCycle = false;
   let pumpSchemaReady = false;
   let pumpPairReady = false;
+  let stonkReceiverReady = false;
   if (readiness.database) {
-    const { data, error } = await getAdminDb().from("system_config").select("key,value").in("key", ["worker_heartbeat", "reward_engine_paused", "production_acceptance"]);
+    const { data, error } = await getAdminDb().from("system_config").select("key,value").in("key", ["worker_heartbeat", "reward_engine_paused", "production_acceptance", "stonk_receiver_health"]);
     databaseReachable = !error;
     const heartbeat = data?.find((row) => row.key === "worker_heartbeat")?.value as { at?: string; pipeline?: string; payoutMode?: string; signerReady?: boolean; signerError?: string | null } | undefined;
     workerFresh = Boolean(heartbeat?.at && heartbeat.pipeline === "operational" && Date.now() - new Date(heartbeat.at).getTime() < 180_000);
@@ -43,6 +43,9 @@ export async function GET() {
       getAdminDb().from("pump_fee_operations").select("id").limit(1),
     ]);
     pumpSchemaReady = !pumpMetadataSchema.error && !pumpFeeSchema.error;
+    const receivers = await getAdminDb().from("stonk_fee_receivers").select("id", { count: "exact", head: true }).is("mint", null).eq("treasury_address", process.env.TOPBLAST_TREASURY_ADDRESS ?? "");
+    const receiverHealth = data?.find(row => row.key === "stonk_receiver_health")?.value as { ready?: boolean; at?: string } | undefined;
+    stonkReceiverReady = !receivers.error && (receivers.count ?? 0) > 0 && receiverHealth?.ready === true && Boolean(receiverHealth.at && Date.now() - new Date(receiverHealth.at).getTime() < 180_000);
   }
   try {
     const mint = process.env.STONK_QUOTE_MINT ?? "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx";
@@ -65,12 +68,13 @@ export async function GET() {
       treasuryRpcReachable = false;
     }
   }
-  const stonkLaunchReady = readiness.launchReady && databaseReachable && pumpSchemaReady && stonkPairReady && stonkCreationReady && treasuryRpcReachable;
+  const stonkLaunchReady = readiness.launchReady && databaseReachable && pumpSchemaReady && stonkPairReady && stonkCreationReady && stonkReceiverReady && treasuryRpcReachable;
   const pumpEnabled = process.env.PUMPFUN_ENABLED === "true";
   const pumpLaunchReady = readiness.launchReady && databaseReachable && pumpSchemaReady && pumpPairReady && pumpEnabled && treasuryRpcReachable;
   const ready = stonkLaunchReady || pumpLaunchReady;
   const rewardsReady = ready && !stonkLaunchReady && workerFresh && signerReady && !enginePaused && !readiness.dryRun && acceptedCycle;
-  const rewardBlockers = [stonkLaunchReady && STONK_ATTRIBUTION_BLOCKER, !workerFresh && "Operational worker heartbeat", !signerReady && (signerError || "Railway treasury signer is not ready"), enginePaused && "Reward engine is paused", readiness.dryRun && "DRY_RUN is enabled", !acceptedCycle && "No accepted end-to-end payout proof yet"].filter(Boolean);
+  const stonkRewardBlocker = "The new Stonk isolated-receiver funding and holder-payout cycle requires real onchain acceptance";
+  const rewardBlockers = [stonkLaunchReady && stonkRewardBlocker, !workerFresh && "Operational worker heartbeat", !signerReady && (signerError || "Railway treasury signer is not ready"), enginePaused && "Reward engine is paused", readiness.dryRun && "DRY_RUN is enabled", !acceptedCycle && "No accepted end-to-end payout proof yet"].filter(Boolean);
   return NextResponse.json({
     status: ready ? "ready" : "configuration_required",
     ready,
@@ -79,9 +83,9 @@ export async function GET() {
     fundingReady: databaseReachable && !readiness.dryRun,
     venues: {
       stonkfun: { launchReady: stonkLaunchReady, pairReady: stonkPairReady, creationReady: stonkCreationReady,
-        creationMethod: "stonk_launchlab", rewardAsset: "selected_quote", fundingMode: "creator_fee_forward_attribution_required", automaticFundingReady: false, rewardsReady: false, rewardBlockers: [STONK_ATTRIBUTION_BLOCKER],
+        creationMethod: "stonk_launchlab", rewardAsset: "selected_quote", fundingMode: "isolated_stonk_receiver", receiverReady: stonkReceiverReady, automaticFundingConfigured: stonkReceiverReady, automaticFundingReady: false, rewardsReady: false, rewardBlockers: [stonkRewardBlocker],
         blockers: [...readiness.missing, !readiness.launchesEnabled && "LAUNCHES_ENABLED is false", !databaseReachable && "Database unavailable",
-          !pumpSchemaReady && "Launch metadata migration required", !stonkPairReady && "STONK pair unavailable", !stonkCreationReady && stonkCreationError, !treasuryRpcReachable && "Treasury RPC check incomplete"].filter(Boolean) },
+          !pumpSchemaReady && "Launch metadata migration required", !stonkReceiverReady && "Isolated fee-wallet migration or worker provisioning required", !stonkPairReady && "STONK pair unavailable", !stonkCreationReady && stonkCreationError, !treasuryRpcReachable && "Treasury RPC check incomplete"].filter(Boolean) },
       pumpfun: {
         launchReady: pumpLaunchReady, pairReady: pumpPairReady, schemaReady: pumpSchemaReady,
         enabled: pumpEnabled, rewardAsset: "selected_quote", fundingMode: "verified_per_mint_fee_sharing", graduationSupported: false,
@@ -97,7 +101,7 @@ export async function GET() {
       },
     },
     rewardsReady,
-    rewardStatus: stonkLaunchReady ? "venue_attribution_required" : acceptedCycle ? rewardsReady ? "operational" : "configured_but_paused" : "acceptance_cycle_required",
+    rewardStatus: stonkLaunchReady ? "isolated_receiver_acceptance_required" : acceptedCycle ? rewardsReady ? "operational" : "configured_but_paused" : "acceptance_cycle_required",
     rewardBlockers,
     checks: {
       databaseConfigured: readiness.database,

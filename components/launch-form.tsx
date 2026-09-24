@@ -33,7 +33,7 @@ interface LaunchStatus { status: string; mint?: string; pool?: string; signature
 interface Prepared {
   rewardTreasury?: string;
   protocolTreasury?: string;
-  raw?: { mintSignerRequired?: boolean; creationMethod?: string; venueFees?: { denominator: string; protocolRate: string; platformRate: string; creatorRate: string } };
+  raw?: { mintSignerRequired?: boolean; creationMethod?: string; feeRecipient?: string; receiverId?: string; venueFees?: { denominator: string; protocolRate: string; platformRate: string; creatorRate: string } };
   logo: string;
   launchId: string;
   signedQuote: string;
@@ -329,7 +329,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
         <div className="field"><label htmlFor="twitter">X URL</label><input id="twitter" name="twitter" type="url" placeholder="https://x.com/..." /></div>
         <div className="field"><label htmlFor="website">Website URL</label><input id="website" name="website" type="url" placeholder="https://..." /></div>
         <div className="field"><label htmlFor="telegram">Telegram URL</label><input id="telegram" name="telegram" type="url" placeholder="https://t.me/..." /></div>
-        {venue === "stonkfun" && <p className="notice">Created through StonkFun’s standard LaunchLab configuration. The TopBlast treasury is the onchain creator-fee recipient. Automatic reward funding is not yet available: Stonk combines fee forwards, and each token’s share must be verified before it can fund rewards.</p>}
+        {venue === "stonkfun" && <p className="notice">Created through StonkFun’s standard LaunchLab configuration. This launch gets its own TopBlast-controlled fee wallet. Stonk’s forwarding threshold still applies. Only funds received and transferred from that wallet can fund this token’s reward pool.</p>}
       </div>
       <div className="form-section">
         <div className="section-label">Pair</div>
@@ -338,7 +338,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
       <div className="form-section">
         <div className="section-label">TopBlast rewards</div>
         <h3>Fund the blast zone.</h3>
-        <p className="notice">Eligible holders below their verified average entry can share this launch’s funded reward pool. Pump uses its official per-mint fee-sharing config. Stonk’s combined fee forwards are not credited until per-token attribution is verified. Unfunded rewards are never allocated.</p>
+        <p className="notice">Eligible holders below their verified average entry can share this launch’s funded reward pool. Pump uses per-mint fee sharing; new Stonk launches use separate fee wallets. The worker applies your split only to confirmed funding. Unfunded rewards are never allocated.</p>
         <p className="notice"><strong>Choose where your distributable fees go.</strong> Holder rewards and Creator always add to 100%.</p>
         <label className="fee-share-control">
           <span className="fee-share-values"><strong><small>Holder rewards</small>{creatorShare.topblastPercent}%</strong><strong><small>Creator</small>{creatorShare.creatorPercent}%</strong></span>
@@ -360,7 +360,8 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
           <p className="notice">Your selected fee split: <strong>{prepared.review.creatorShare.topblastPercent}% holder rewards / {prepared.review.creatorShare.creatorPercent}% creator.</strong> These are the only allocation percentages shown in the launch flow, and they total 100%.</p>
           <p className="notice">Epoch release: {EPOCH_RELEASE_PERCENT}% of the available holder-reward balance is reserved for each eligible epoch. {100 - EPOCH_RELEASE_PERCENT}% carries forward inside this launch. No funded balance means no payout.</p>
           <p className="notice">Reward asset: {prepared.review.quoteSymbol}. Reward treasury: <span className="mono">{prepared.rewardTreasury ?? "Unavailable. Do not approve until verified."}</span>. Protocol treasury: <span className="mono">{prepared.protocolTreasury ?? "Unavailable. Do not approve until verified."}</span>.</p>
-          <p className="notice"><strong>Permanent configuration:</strong> the selected holder / creator split and token metadata are fixed at launch. {prepared.review.venue === "stonkfun" ? "The onchain creator-fee recipient is the TopBlast treasury. Only finalized fee forwards matching this exact pool can fund its rewards; the worker sends the creator share and eligible-holder airdrops." : "Pump is beta. After creation, the worker locks this mint to Pump.fun’s official per-mint fee-sharing config. Only finalized distributions for this mint fund rewards. No initial buy, cashback, mayhem, or PumpSwap graduation support."}</p>
+          <p className="notice"><strong>Permanent configuration:</strong> the selected holder / creator split and token metadata are fixed at launch. {prepared.review.venue === "stonkfun" ? "The onchain creator-fee recipient is this token’s dedicated TopBlast wallet. The worker transfers confirmed funding into this launch’s ledger before sending creator and eligible-holder payouts. Stonk’s forwarding threshold still applies." : "Pump is beta. After creation, the worker locks this mint to Pump.fun’s official per-mint fee-sharing config. Only finalized distributions for this mint fund rewards. No initial buy, cashback, mayhem, or PumpSwap graduation support."}</p>
+          {prepared.raw?.receiverId && <p className="notice">Dedicated fee wallet: <span className="mono">{prepared.raw.feeRecipient}</span>. TopBlast supplies a one-time 0.01 SOL operating top-up after finalization. This is gas, not reward funding. Funds sent to this dedicated wallet are attributed only to this launch.</p>}
           {prepared.review.venue === "pumpfun" && <p className="notice">Shown SOL cost is the simulated debit for network fees and account creation. No initial buy. Creator fees follow Pump.fun’s schedule and are distributed in {prepared.review.quoteSymbol}.</p>}
           {prepared.raw?.creationMethod === "stonk_launchlab" && <p className="notice">StonkFun standard launch through its published LaunchLab configuration. Shown SOL cost covers simulated network fees and account rent, not an initial buy or reward funding. Stonk’s token listing may take time to appear.</p>}
           {prepared.raw?.venueFees && <p className="notice">Venue trading fees: {((Number(prepared.raw.venueFees.protocolRate) + Number(prepared.raw.venueFees.platformRate) + Number(prepared.raw.venueFees.creatorRate)) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% total, including {(Number(prepared.raw.venueFees.creatorRate) / Number(prepared.raw.venueFees.denominator) * 100).toFixed(2)}% creator fee. For Stonk launches, the selected holder / creator split applies to each verified creator-fee transfer received by the launch treasury.</p>}

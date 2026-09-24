@@ -12,8 +12,17 @@ export async function GET(request: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   const launches = await Promise.all((data ?? []).map(async (launch) => {
     if (!launch.mint) return { ...launch, venue_fee_status: { claimable: null, reason: "Token launch is not finalized yet" } };
-    try { return { ...launch, venue_fee_status: await launchVenue(launch.venue).getCreatorFees(launch.mint) }; }
-    catch (caught) { return { ...launch, venue_fee_status: { claimable: null, reason: caught instanceof Error ? caught.message : "Venue fee status unavailable" } }; }
+    let receiver = null;
+    if (launch.venue === "stonkfun") {
+      const [address, status, operations] = await Promise.all([
+        db.from("stonk_fee_receivers").select("address").eq("mint", launch.mint).maybeSingle(),
+        db.from("system_config").select("value").eq("key", `stonk_fee_status:${launch.id}`).maybeSingle(),
+        db.from("stonk_receiver_operations").select("kind,status,amount_atoms,signature,error_message").eq("launch_id", launch.id).order("created_at", { ascending: false }).limit(10),
+      ]);
+      if (address.data) receiver = { ...address.data, status: status.data?.value, operations: operations.data ?? [] };
+    }
+    try { return { ...launch, fee_receiver: receiver, venue_fee_status: await launchVenue(launch.venue).getCreatorFees(launch.mint) }; }
+    catch (caught) { return { ...launch, fee_receiver: receiver, venue_fee_status: { claimable: null, reason: caught instanceof Error ? caught.message : "Venue fee status unavailable" } }; }
   }));
   return NextResponse.json({ launches, configured: true });
 }

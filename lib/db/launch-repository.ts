@@ -98,7 +98,16 @@ export async function registerLaunchTracker(launchId: string, input?: { mint: st
   }
   await db.from("launches").update({ tracker_status: "registering", tracker_error: null }).eq("id", launchId);
   try {
-    const market = await (source.venue === "pumpfun" ? inspectPumpMarket(source) : inspectLaunchLabMarket(source));
+    let feeRecipient: string | undefined;
+    if (source.venue !== "pumpfun") {
+      const receiver = await db.from("stonk_fee_receivers").select("address,treasury_address").eq("mint", source.mint).maybeSingle();
+      if (receiver.error) throw receiver.error;
+      if (receiver.data) {
+        if (receiver.data.treasury_address !== process.env.TOPBLAST_TREASURY_ADDRESS) throw new Error("Stonk receiver treasury mismatch");
+        feeRecipient = receiver.data.address;
+      }
+    }
+    const market = await (source.venue === "pumpfun" ? inspectPumpMarket(source) : inspectLaunchLabMarket({ ...source, feeRecipient }));
     await addHeliusWebhookAddresses([source.mint, source.pool]);
     const { error: marketError } = await db.from("tracked_markets").upsert({
       launch_id: launchId, venue: source.venue ?? "stonkfun", market_address: source.pool,

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { ComputeBudgetProgram, PublicKey, Transaction } from "@solana/web3.js";
 import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { getAdminDb } from "@/lib/db/server";
+import { reserveStonkReceiver } from "@/lib/db/stonk-receivers";
 import { solanaRpc } from "@/lib/solana/rpc";
 import { launchReviewExpiry } from "@/lib/solana/launch-expiry";
 import { LAUNCHLAB_PROGRAM, TOKEN_PROGRAM, TOKEN_2022_PROGRAM } from "@/lib/solana/launchlab-constants";
@@ -91,14 +92,14 @@ export async function verifyStonkPricing(raw: unknown, quoteMint: string) {
   return { pricing, platformInfo, configInfo, token2022 };
 }
 
-export async function simulateStonkLaunch(input: LaunchDraft, verified: Awaited<ReturnType<typeof verifyStonkPricing>>) {
+export async function simulateStonkLaunch(input: LaunchDraft, verified: Awaited<ReturnType<typeof verifyStonkPricing>>, receiver?: { id: string; address: string }) {
   if (!input.launchMint) throw new Error("Refresh the page to prepare a Stonk launch with a browser-generated mint");
   validatePumpImage(input.logo);
   const { pricing, platformInfo, configInfo, token2022 } = verified;
   const payer = new PublicKey(input.creatorWallet), mint = new PublicKey(input.launchMint), quote = new PublicKey(input.quoteMint);
   // The API readiness gate requires the treasury in production. Falling back to
   // the payer keeps the low-level adapter independently testable.
-  const feeRecipientValue = process.env.TOPBLAST_TREASURY_ADDRESS ?? input.creatorWallet;
+  const feeRecipientValue = receiver?.address ?? process.env.TOPBLAST_TREASURY_ADDRESS ?? input.creatorWallet;
   const feeRecipient = new PublicKey(feeRecipientValue);
   if (!PublicKey.isOnCurve(payer.toBytes()) || !PublicKey.isOnCurve(feeRecipient.toBytes()) || !PublicKey.isOnCurve(mint.toBytes()) || payer.equals(mint) || feeRecipient.equals(mint) || quote.equals(mint)) throw new Error("Invalid payer, fee recipient, or new mint signer");
   const exists = await solanaRpc<{ value: unknown }>("getAccountInfo", [input.launchMint, { commitment: "finalized", encoding: "base64" }]);
@@ -147,11 +148,11 @@ export async function simulateStonkLaunch(input: LaunchDraft, verified: Awaited<
     metadata: { name: input.name, symbol: input.symbol, description: input.description, image: `${uri}?image=1`, external_url: input.website, twitter: input.twitter, telegram: input.telegram } };
   const lamports = String(before.value - after!);
   const prepared: PreparedLaunch = {
-    signedQuote: JSON.stringify({ venue: "stonkfun", method: "launchlab", mint: input.launchMint, pool: pool.toBase58(), feeRecipient: feeRecipient.toBase58(), metadataId, lastValidBlockHeight: latest.value.lastValidBlockHeight }),
+    signedQuote: JSON.stringify({ venue: "stonkfun", method: "launchlab", mint: input.launchMint, pool: pool.toBase58(), feeRecipient: feeRecipient.toBase58(), receiverId: receiver?.id, metadataId, lastValidBlockHeight: latest.value.lastValidBlockHeight }),
     paymentTransaction: wire, payment: { lamports, sol: Number(lamports) / 1e9, recipient: LAUNCHLAB_PROGRAM },
     expiresAt: await launchReviewExpiry(latest.value.lastValidBlockHeight),
     raw: { creationMethod: "stonk_launchlab", mintSignerRequired: true, simulation: "passed", simulationSlot: simulation.context.slot,
-      fundingMode: "creator_fee_forward_attribution_required", rewardAsset: input.quoteSymbol, feeRecipient: feeRecipient.toBase58(), feeRecipientQuoteAccount: feeRecipientQuoteAccount.toBase58(), platform: pricing.platform.standard, pricing,
+      fundingMode: receiver ? "isolated_stonk_receiver" : "creator_fee_forward_attribution_required", receiverId: receiver?.id, receiverGasSol: receiver ? "0.01" : undefined, rewardAsset: input.quoteSymbol, feeRecipient: feeRecipient.toBase58(), feeRecipientQuoteAccount: feeRecipientQuoteAccount.toBase58(), platform: pricing.platform.standard, pricing,
       baseTokenProgram: token2022 ? TOKEN_2022_PROGRAM : TOKEN_PROGRAM, transferFeeEnabled: false,
       venueFees: { denominator: "1000000", protocolRate: configInfo.tradeFeeRate.toString(), platformRate: platformInfo.feeRate.toString(), creatorRate: platformInfo.creatorFeeRate.toString() },
       costDescription: "Simulated SOL debit for network fees and account rent. No initial buy. Venue fees come from Stonk's onchain configuration, not the TopBlast allocation." },
@@ -160,7 +161,9 @@ export async function simulateStonkLaunch(input: LaunchDraft, verified: Awaited<
 }
 
 export async function prepareStonkLaunch(input: LaunchDraft, verified: Awaited<ReturnType<typeof verifyStonkPricing>>): Promise<PreparedLaunch> {
-  const { prepared, metadata } = await simulateStonkLaunch(input, verified);
+  if (!input.launchMint) throw new Error("A browser-generated mint is required");
+  const receiver = await reserveStonkReceiver(input.launchMint);
+  const { prepared, metadata } = await simulateStonkLaunch(input, verified, receiver);
   const { error } = await getAdminDb().from("launch_metadata").insert(metadata);
   if (error) throw error;
   return prepared;

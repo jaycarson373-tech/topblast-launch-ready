@@ -85,7 +85,7 @@ export async function prepareCheckedTransfer(input: {
   const simulation = await solanaRpc<Simulation>("simulateTransaction", [unsignedBytes.toString("base64"), {
     encoding: "base64", commitment: "finalized", sigVerify: false, replaceRecentBlockhash: false,
   }]);
-  if (simulation.value.err) throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)} ${(simulation.value.logs ?? []).slice(-2).join(" ")}`);
+  if (simulation.value?.err !== null) throw new Error(`Transaction simulation failed or incomplete: ${JSON.stringify(simulation.value?.err)} ${(simulation.value?.logs ?? []).slice(-2).join(" ")}`);
   return {
     unsignedTransaction: unsignedBytes.toString("base64"),
     messageHash: messageHash(transaction),
@@ -124,7 +124,7 @@ export async function verifyFinalizedSignedTransaction(signature: string, signed
     commitment: "finalized", encoding: "base64", maxSupportedTransactionVersion: 0,
   }]);
   if (!result) return null;
-  if (!result.meta || result.meta.err) throw new Error("Finalized transaction failed");
+  if (!result.meta || result.meta.err !== null) throw new Error("Finalized transaction failed or metadata incomplete");
   const expected = Buffer.from(signedTransaction, "base64");
   const actual = Buffer.from(result.transaction[0], "base64");
   if (!actual.equals(expected)) throw new Error("Finalized transaction bytes do not match the approved transaction");

@@ -11,6 +11,7 @@ import { automaticPayoutReadiness, automaticPayoutsConfigured, processAutomaticP
 import { reconcileStonkForwardedFees } from "../lib/funding/stonk-auto";
 import { processCreatorFeeDistribution } from "../lib/funding/creator-distribution";
 import { processPumpCreatorFees } from "../lib/funding/pump-auto";
+import { provisionStonkReceivers, processStonkReceiver } from "../lib/funding/stonk-isolated";
 
 const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -51,6 +52,12 @@ async function runCycle() {
     updated_at: lastCycleAt,
   });
   if (heartbeatError) throw heartbeatError;
+  try {
+    await provisionStonkReceivers(db, owner);
+    await db.from("system_config").upsert({ key: "stonk_receiver_health", value: { ready: !dryRun && signer.ready, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
+  } catch (error) {
+    await db.from("system_config").upsert({ key: "stonk_receiver_health", value: { ready: false, at: new Date().toISOString(), error: error instanceof Error ? error.message : "Receiver provisioning failed" }, updated_at: new Date().toISOString() });
+  }
 
   const { data: pendingLaunches } = await db.from("launches").select("id").eq("status", "processing").not("payment_signature", "is", null);
   for (const launch of pendingLaunches ?? []) {
@@ -70,6 +77,18 @@ async function runCycle() {
   // same owner to renew it, so Promise.all with one owner is NOT mutual exclusion.
   // Serialize treasury work; independent market indexing remains parallel below.
   for (const market of markets ?? []) {
+    if (market.venue === "stonkfun") {
+      try {
+        const result = await processStonkReceiver(db, market, owner);
+        const legacy = result.status === "legacy_attribution_required" ? await reconcileStonkForwardedFees(db, market) : null;
+        const diagnostic = await db.from("system_config").upsert({ key: `stonk_fee_status:${market.launch_id}`, value: { status: result.status, message: legacy?.reason ?? null, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
+        if (diagnostic.error) throw diagnostic.error;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Isolated Stonk receiver failed";
+        await db.from("system_config").upsert({ key: `stonk_fee_status:${market.launch_id}`, value: { status: "error", message, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
+        process.stderr.write(`${market.launch_id}: ${message}\n`);
+      }
+    }
     if (market.venue === "pumpfun") {
       try {
         const result = await processPumpCreatorFees(db, market, owner);
@@ -100,16 +119,6 @@ async function runCycle() {
         const venueMarket = await launchVenue(market.venue).getMarketData(market.base_mint, market.market_address);
         await db.from("launches").update({ price_usd: venueMarket.priceUsd, market_cap_usd: venueMarket.marketCapUsd, volume_24h_usd: venueMarket.volume24hUsd, liquidity_usd: venueMarket.liquidityUsd, updated_at: new Date().toISOString() }).eq("id", market.launch_id);
       } catch (error) { process.stderr.write(`${market.launch_id}: optional venue metrics unavailable: ${error instanceof Error ? error.message : "unknown error"}\n`); }
-    }
-    if (market.venue === "stonkfun") {
-      try {
-        const result = await reconcileStonkForwardedFees(db, market);
-        const diagnostic = await db.from("system_config").upsert({ key: `stonk_fee_status:${market.launch_id}`, value: { status: result.status, message: result.reason, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
-        if (diagnostic.error) throw diagnostic.error;
-        if (result.credited) process.stdout.write(`${market.launch_id}: credited ${result.credited} finalized Stonk creator-fee receipt(s)\n`);
-      } catch (error) {
-        process.stderr.write(`${market.launch_id}: Stonk creator-fee reconciliation failed: ${error instanceof Error ? error.message : "unknown error"}\n`);
-      }
     }
   }));
 

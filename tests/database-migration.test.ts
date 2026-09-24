@@ -19,6 +19,7 @@ describe("Supabase migrations", () => {
     await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609220003_automatic_creator_fees.sql"), "utf8"));
     await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609230001_epoch_release_policy.sql"), "utf8"));
     await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609240001_pump_fee_sharing.sql"), "utf8"));
+    await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609240002_stonk_isolated_receivers.sql"), "utf8"));
     await db.exec("set role service_role");
     await db.query("insert into public.launch_metadata(id,metadata,image_data) values('00000000-0000-4000-8000-000000000099','{}','test-image')");
     await expect(db.query("update public.launch_metadata set image_data='overwritten'")).rejects.toThrow();
@@ -29,6 +30,13 @@ describe("Supabase migrations", () => {
     const columns = await db.query<{ column_name: string }>("select column_name from information_schema.columns where table_schema='public' and table_name='funding_deposits'");
     expect(columns.rows.map((row) => row.column_name)).toContain("launch_id");
     const a = "00000000-0000-4000-8000-00000000000a", b = "00000000-0000-4000-8000-00000000000b";
+    const ra = "00000000-0000-4000-8000-0000000000aa", rb = "00000000-0000-4000-8000-0000000000bb";
+    await db.query("insert into public.stonk_fee_receivers(id,address,treasury_address) values($1,'receiver-a','treasury'),($2,'receiver-b','treasury')", [ra, rb]);
+    const reserved = await db.query<{ address: string }>("select address from public.reserve_stonk_fee_receiver($1,'treasury')", ["1".repeat(32)]);
+    expect(reserved.rows[0].address).toBe("receiver-a");
+    expect((await db.query("select address from public.reserve_stonk_fee_receiver($1,'treasury')", ["1".repeat(32)])).rows).toEqual(reserved.rows);
+    expect((await db.query<{ address: string }>("select address from public.reserve_stonk_fee_receiver($1,'treasury')", ["2".repeat(32)])).rows[0].address).toBe("receiver-b");
+    await expect(db.query("update public.stonk_fee_receivers set mint=$1 where id=$2", ["3".repeat(32), ra])).rejects.toThrow("immutable");
     for (const [id, mint, market] of [[a, "mint-a", "market-a"], [b, "mint-b", "market-b"]]) {
       await db.query("insert into public.launches(id,venue,creator_wallet,name,symbol,image_url,quote_mint,quote_symbol,mint,market_address,signed_quote_hash,status,is_test) values($1::uuid,case when $1::uuid::text like '%00b' then 'pumpfun' else 'stonkfun' end,'creator','Token','TOK','logo','stonk','STONK',$2,$3,'hash','active',$4)", [id, mint, market, id === b]);
       await db.query("insert into public.launch_configs(launch_id,fee_tier,topblast_percent,creator_percent,protocol_percent,reward_asset_mint,treasury_address) values($1,'1%',70,20,10,'stonk','treasury')", [id]);
@@ -87,6 +95,20 @@ describe("Supabase migrations", () => {
     expect(pumpDuplicate.rows[0].credit_pump_shared_fee).toBe(false);
     await expect(db.query("select public.credit_pump_shared_fee($1,$2,'pump-fee-one',100,50,now(),'{}'::jsonb)", [pumpOperation.rows[0].id, a])).rejects.toThrow("does not match");
     expect((await db.query<{ available_atoms: string }>("select available_atoms from public.launch_funding_balances where launch_id=$1", [b])).rows[0].available_atoms).toBe("140");
+    const receiverA = "00000000-0000-4000-8000-0000000000cc";
+    await db.query("insert into public.stonk_fee_receivers(id,address,treasury_address,mint) values($1,'isolated-a','treasury','mint-a')", [receiverA]);
+    await db.query("insert into public.tracked_markets(launch_id,venue,market_address,base_mint,quote_mint,creator_address,launch_slot,last_indexed_slot,active) values($1,'stonkfun','market-a','mint-a','stonk','isolated-a',1,100,true)", [a]);
+    const sweepA = await db.query<{ id: string }>("insert into public.stonk_receiver_operations(launch_id,receiver_id,kind,status,idempotency_key,asset_mint,amount_atoms,signature,slot,proof) values($1,$2,'sweep','confirmed','sweep-a','stonk',100,'isolated-fee-a',80,'{}') returning id", [a, receiverA]);
+    expect((await db.query<{ credit_stonk_receiver_sweep: boolean }>("select public.credit_stonk_receiver_sweep($1)", [sweepA.rows[0].id])).rows[0].credit_stonk_receiver_sweep).toBe(true);
+    expect((await db.query<{ credit_stonk_receiver_sweep: boolean }>("select public.credit_stonk_receiver_sweep($1)", [sweepA.rows[0].id])).rows[0].credit_stonk_receiver_sweep).toBe(false);
+    expect((await db.query<{ available_atoms: string }>("select available_atoms from public.launch_funding_balances where launch_id=$1", [a])).rows[0].available_atoms).toBe("95");
+    expect((await db.query<{ available_atoms: string }>("select available_atoms from public.launch_funding_balances where launch_id=$1", [b])).rows[0].available_atoms).toBe("140");
+    const foreign = await db.query<{ id: string }>("insert into public.stonk_receiver_operations(launch_id,receiver_id,kind,status,idempotency_key,asset_mint,amount_atoms,signature,slot,proof) values($1,$2,'sweep','confirmed','foreign-sweep','stonk',100,'foreign-sig',80,'{}') returning id", [b, receiverA]);
+    await expect(db.query("select public.credit_stonk_receiver_sweep($1)", [foreign.rows[0].id])).rejects.toThrow("identity mismatch");
+    await expect(db.query("update public.stonk_receiver_operations set amount_atoms=101 where id=$1", [sweepA.rows[0].id])).rejects.toThrow("immutable");
+    const gasA = await db.query<{ id: string }>("insert into public.stonk_receiver_operations(launch_id,receiver_id,kind,status,idempotency_key,asset_mint,amount_atoms,signature,slot,proof) values($1,$2,'gas','confirmed','gas-a','So11111111111111111111111111111111111111112',10000000,'gas-sig',80,'{}') returning id", [a, receiverA]);
+    await expect(db.query("select public.credit_stonk_receiver_sweep($1)", [gasA.rows[0].id])).rejects.toThrow("confirmed sweep");
+    await expect(db.query("insert into public.stonk_receiver_operations(launch_id,receiver_id,kind,idempotency_key,asset_mint,amount_atoms) values($1,$2,'gas','duplicate-gas','So11111111111111111111111111111111111111112',10000000)", [a, receiverA])).rejects.toThrow();
     // Public views hide tests even for a service-role caller that bypasses RLS.
     expect((await db.query<{ id: string }>("select id from public.launch_explore")).rows).toEqual([{ id: a }]);
     expect((await db.query<{ launch_id: string }>("select launch_id from public.launch_funding_public")).rows).toEqual([{ launch_id: a }]);
@@ -124,5 +146,5 @@ describe("Supabase migrations", () => {
     await db.exec("reset role");
     await db.query("update public.launches set listing_hidden=false where id=$1", [a]);
     await db.close();
-  }, 30_000);
+  }, 60_000);
 });
