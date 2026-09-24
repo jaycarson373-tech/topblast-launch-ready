@@ -120,7 +120,7 @@ type Ix = { programId?: string; data?: string };
 type TokenBalance = { accountIndex: number; mint: string; owner?: string; programId?: string; uiTokenAmount: { amount: string } };
 
 export function verifyPumpFeeDistribution(tx: ParsedTx, signature: string, market: PumpMarket, treasury: PublicKey, sharing: PublicKey) {
-  if (!tx.meta || tx.meta.err || tx.transaction.signatures[0] !== signature || !Number.isSafeInteger(tx.slot) || !Number.isSafeInteger(tx.blockTime)) throw new Error("Pump fee distribution is not finalized proof");
+  if (!tx.meta || tx.meta.err !== null || tx.transaction.signatures[0] !== signature || !Number.isSafeInteger(tx.slot) || tx.slot < Number(market.launch_slot) || !Number.isSafeInteger(tx.blockTime)) throw new Error("Pump fee distribution is not finalized proof");
   const instructions = [...tx.transaction.message.instructions, ...(tx.meta.innerInstructions ?? []).flatMap((item) => item.instructions)];
   const events = instructions.flatMap((instruction) => {
     if (instruction.programId !== PUMP_PROGRAM_ID.toBase58() || !instruction.data) return [];
@@ -130,25 +130,28 @@ export function verifyPumpFeeDistribution(tx: ParsedTx, signature: string, marke
   });
   if (events.length !== 1) throw new Error("Pump fee distribution event is missing or ambiguous");
   const event = events[0];
+  // Present in the official IDL and decoded event; omitted from SDK 2.0's TS interface.
+  const eventCurve = (event as typeof event & { bondingCurve?: PublicKey }).bondingCurve;
   const quoteMint = normalizedPumpQuote(event.quoteMint).toBase58();
   const amount = BigInt(event.distributed.toString());
-  if (!event.mint.equals(new PublicKey(market.base_mint)) || !event.sharingConfig.equals(sharing) || !event.admin.equals(treasury) || quoteMint !== market.quote_mint || amount <= 0n || event.shareholders.length !== 1 || !event.shareholders[0].address.equals(treasury) || event.shareholders[0].shareBps !== 10_000) throw new Error("Pump fee distribution identity mismatch");
+  if (!event.mint.equals(new PublicKey(market.base_mint)) || !eventCurve?.equals(new PublicKey(market.market_address)) || !event.sharingConfig.equals(sharing) || !event.admin.equals(treasury) || quoteMint !== market.quote_mint || amount < 0n || event.shareholders.length !== 1 || !event.shareholders[0].address.equals(treasury) || event.shareholders[0].shareBps !== 10_000) throw new Error("Pump fee distribution identity mismatch");
   const keys = tx.transaction.message.accountKeys.map((item) => typeof item === "string" ? item : item.pubkey);
   if (market.quote_mint === NATIVE_MINT.toBase58()) {
     const index = keys.indexOf(treasury.toBase58());
-    if (index < 0 || BigInt(tx.meta.postBalances[index]) - BigInt(tx.meta.preBalances[index]) + BigInt(tx.meta.fee) !== amount) throw new Error("Pump SOL fee destination delta mismatch");
+    const payerFee = index === 0 ? tx.meta.fee : 0;
+    if (index < 0 || ![tx.meta.postBalances[index], tx.meta.preBalances[index], payerFee].every((n) => Number.isSafeInteger(n) && n >= 0) || BigInt(tx.meta.postBalances[index]) - BigInt(tx.meta.preBalances[index]) + BigInt(payerFee) !== amount) throw new Error("Pump SOL fee destination delta mismatch");
   } else {
     const destination = getAssociatedTokenAddressSync(new PublicKey(market.quote_mint), treasury, false, new PublicKey(market.quote_token_program)).toBase58();
     const index = keys.indexOf(destination);
     if (index < 0) throw new Error("Pump token fee destination is missing");
     const read = (rows: TokenBalance[] | undefined) => rows?.find((row) => row.accountIndex === index);
     const before = read(tx.meta.preTokenBalances), after = read(tx.meta.postTokenBalances);
-    if (!after || after.mint !== market.quote_mint || after.owner !== treasury.toBase58() || after.programId !== market.quote_token_program || BigInt(after.uiTokenAmount.amount) - BigInt(before?.uiTokenAmount.amount ?? "0") !== amount) throw new Error("Pump token fee destination delta mismatch");
+    if (!after || after.mint !== market.quote_mint || after.owner !== treasury.toBase58() || after.programId !== market.quote_token_program || (before && (before.mint !== after.mint || before.owner !== after.owner || before.programId !== after.programId)) || BigInt(after.uiTokenAmount.amount) - BigInt(before?.uiTokenAmount.amount ?? "0") !== amount) throw new Error("Pump token fee destination delta mismatch");
   }
   return { amountAtoms: amount.toString(), slot: tx.slot, blockTime: new Date(tx.blockTime! * 1000).toISOString(), quoteMint, sharingConfig: sharing.toBase58(), treasury: treasury.toBase58() };
 }
 
-async function reconcileOperation(db: SupabaseClient, row: Operation, market: PumpMarket, treasury: PublicKey) {
+export async function reconcilePumpFeeOperation(db: SupabaseClient, row: Operation, market: PumpMarket, treasury: PublicKey) {
   if (!["signed", "submitted", "uncertain"].includes(row.status)) return row;
   const signature = row.signature ? String(row.signature) : null, signed = row.signed_transaction ? String(row.signed_transaction) : null;
   if (!signature || !signed) throw new Error("Pump fee operation is missing its signed receipt");
@@ -180,25 +183,34 @@ async function reconcileOperation(db: SupabaseClient, row: Operation, market: Pu
     if (!tx) throw new Error("Finalized Pump fee distribution receipt is unavailable");
     if (tx.slot !== exact.slot) throw new Error("Pump fee distribution slot does not match its signed receipt");
     const verified = verifyPumpFeeDistribution(tx, signature, market, treasury, sharing);
-    amount = verified.amountAtoms;
-    proof = { ...proof, type: "pump_fee_distribution", ...verified };
+    // A finalized, successful zero distribution is a terminal no-op, not an
+    // identity failure. Retain its receipt without creating any funding credit.
+    // The amount column intentionally only permits positive amounts or null.
+    amount = verified.amountAtoms === "0" ? null : verified.amountAtoms;
+    proof = { ...proof, type: amount === null ? "pump_fee_distribution_empty" : "pump_fee_distribution", ...verified };
+    if (amount === null) {
+      const recorded = await db.from("transaction_proofs").upsert({ launch_id: market.launch_id, kind: "fee_claim", signature, slot: exact.slot, payload: proof, idempotency_key: `pump-empty:${signature}` }, { onConflict: "idempotency_key", ignoreDuplicates: true });
+      if (recorded.error) throw recorded.error;
+    }
   }
   const updated = await db.from("pump_fee_operations").update({ status: "confirmed", amount_atoms: amount, slot: exact.slot, proof, error_message: null, updated_at: new Date().toISOString() }).eq("id", row.id).neq("status", "confirmed").select("*").single();
   if (updated.error) throw updated.error;
   return updated.data as Operation;
 }
 
-async function creditConfirmedDistributions(db: SupabaseClient, market: PumpMarket) {
+export async function creditConfirmedDistributions(db: SupabaseClient, market: PumpMarket) {
   const rows = await db.from("pump_fee_operations").select("*").eq("launch_id", market.launch_id).eq("kind", "distribute").eq("status", "confirmed").order("created_at");
   if (rows.error) throw rows.error;
   for (const row of rows.data ?? []) {
+    const proof = row.proof as Record<string, unknown>;
+    if (row.amount_atoms === null && proof?.type === "pump_fee_distribution_empty" && proof.amountAtoms === "0" && proof.signature === row.signature) continue;
+    if (row.amount_atoms == null || !/^[1-9][0-9]*$/.test(String(row.amount_atoms))) throw new Error("Confirmed Pump distribution is missing a positive funding amount");
     const existing = await db.from("fee_events").select("id,launch_id").eq("signature", row.signature).eq("asset_mint", market.quote_mint).maybeSingle();
     if (existing.error) throw existing.error;
     if (existing.data) {
       if (existing.data.launch_id !== market.launch_id) throw new Error("Pump fee receipt is attributed to another launch");
       continue;
     }
-    const proof = row.proof as Record<string, unknown>;
     const result = await db.rpc("credit_pump_shared_fee", { p_operation_id: row.id, p_launch_id: market.launch_id, p_signature: row.signature, p_amount_atoms: row.amount_atoms, p_slot: row.slot, p_block_time: proof.blockTime, p_proof: proof });
     if (result.error) {
       if (String(result.error.message).includes("outside indexed launch history")) return false;
@@ -234,7 +246,7 @@ export async function processPumpCreatorFees(db: SupabaseClient, market: PumpMar
   const inFlight = await db.from("pump_fee_operations").select("*").eq("launch_id", market.launch_id).in("status", ["signed", "submitted", "uncertain"]).order("created_at").limit(1).maybeSingle();
   if (inFlight.error) throw inFlight.error;
   if (inFlight.data) {
-    const reconciled = await reconcileOperation(db, inFlight.data as Operation, market, treasury);
+    const reconciled = await reconcilePumpFeeOperation(db, inFlight.data as Operation, market, treasury);
     if (reconciled.status !== "confirmed") return { status: "awaiting_finality", signature: reconciled.signature ? String(reconciled.signature) : null };
   }
 
@@ -262,7 +274,9 @@ export async function processPumpCreatorFees(db: SupabaseClient, market: PumpMar
   const online = new OnlinePumpSdk(new Connection(solanaRpcUrl(), "confirmed"));
   if (market.quote_mint === NATIVE_MINT.toBase58()) {
     const minimum = await online.getMinimumDistributableFee(mint, treasury, { quoteMint: NATIVE_MINT, quoteTokenProgram: TOKEN_PROGRAM_ID, payer: treasury });
-    if (!minimum.canDistribute) return { status: "idle" };
+    // The program can allow distribution with zero distributable lamports.
+    // Rent in the creator vault is never revenue and must not trigger a claim.
+    if (!minimum.canDistribute || minimum.distributableFees.lten(0)) return { status: "idle" };
   }
   const distribution = await online.buildDistributeCreatorFeesInstructions(mint, { quoteMint: new PublicKey(market.quote_mint), quoteTokenProgram: quote.tokenProgram, payer: treasury });
   if (distribution.isGraduated) throw new Error("PumpSwap graduation is not supported yet; tracking and fee distribution are paused");

@@ -104,6 +104,8 @@ async function runCycle() {
     if (market.venue === "stonkfun") {
       try {
         const result = await reconcileStonkForwardedFees(db, market);
+        const diagnostic = await db.from("system_config").upsert({ key: `stonk_fee_status:${market.launch_id}`, value: { status: result.status, message: result.reason, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
+        if (diagnostic.error) throw diagnostic.error;
         if (result.credited) process.stdout.write(`${market.launch_id}: credited ${result.credited} finalized Stonk creator-fee receipt(s)\n`);
       } catch (error) {
         process.stderr.write(`${market.launch_id}: Stonk creator-fee reconciliation failed: ${error instanceof Error ? error.message : "unknown error"}\n`);

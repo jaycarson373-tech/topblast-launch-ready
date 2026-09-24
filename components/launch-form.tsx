@@ -329,7 +329,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
         <div className="field"><label htmlFor="twitter">X URL</label><input id="twitter" name="twitter" type="url" placeholder="https://x.com/..." /></div>
         <div className="field"><label htmlFor="website">Website URL</label><input id="website" name="website" type="url" placeholder="https://..." /></div>
         <div className="field"><label htmlFor="telegram">Telegram URL</label><input id="telegram" name="telegram" type="url" placeholder="https://t.me/..." /></div>
-        {venue === "stonkfun" && <p className="notice">Created through StonkFun’s standard LaunchLab configuration. The TopBlast treasury is the onchain creator-fee recipient. The worker credits only finalized fee transfers proven to come from this exact launch, then applies the selected split automatically.</p>}
+        {venue === "stonkfun" && <p className="notice">Created through StonkFun’s standard LaunchLab configuration. The TopBlast treasury is the onchain creator-fee recipient. Automatic reward funding is not yet available: Stonk combines fee forwards, and each token’s share must be verified before it can fund rewards.</p>}
       </div>
       <div className="form-section">
         <div className="section-label">Pair</div>
@@ -338,7 +338,7 @@ export function LaunchForm({ testMode = false, publicTestListing = false }: { te
       <div className="form-section">
         <div className="section-label">TopBlast rewards</div>
         <h3>Fund the blast zone.</h3>
-        <p className="notice">When eligible holders fall below their verified average entry, they share the funded TopBlast reward pool. Stonk launches use verified pool fee forwards. Pump launches activate the official per-mint fee-sharing config. The worker enforces this launch’s allocation automatically.</p>
+        <p className="notice">Eligible holders below their verified average entry can share this launch’s funded reward pool. Pump uses its official per-mint fee-sharing config. Stonk’s combined fee forwards are not credited until per-token attribution is verified. Unfunded rewards are never allocated.</p>
         <p className="notice"><strong>Choose where your distributable fees go.</strong> Holder rewards and Creator always add to 100%.</p>
         <label className="fee-share-control">
           <span className="fee-share-values"><strong><small>Holder rewards</small>{creatorShare.topblastPercent}%</strong><strong><small>Creator</small>{creatorShare.creatorPercent}%</strong></span>

@@ -151,7 +151,7 @@ export async function simulateStonkLaunch(input: LaunchDraft, verified: Awaited<
     paymentTransaction: wire, payment: { lamports, sol: Number(lamports) / 1e9, recipient: LAUNCHLAB_PROGRAM },
     expiresAt: await launchReviewExpiry(latest.value.lastValidBlockHeight),
     raw: { creationMethod: "stonk_launchlab", mintSignerRequired: true, simulation: "passed", simulationSlot: simulation.context.slot,
-      fundingMode: "automatic_creator_fee", rewardAsset: input.quoteSymbol, feeRecipient: feeRecipient.toBase58(), feeRecipientQuoteAccount: feeRecipientQuoteAccount.toBase58(), platform: pricing.platform.standard, pricing,
+      fundingMode: "creator_fee_forward_attribution_required", rewardAsset: input.quoteSymbol, feeRecipient: feeRecipient.toBase58(), feeRecipientQuoteAccount: feeRecipientQuoteAccount.toBase58(), platform: pricing.platform.standard, pricing,
       baseTokenProgram: token2022 ? TOKEN_2022_PROGRAM : TOKEN_PROGRAM, transferFeeEnabled: false,
       venueFees: { denominator: "1000000", protocolRate: configInfo.tradeFeeRate.toString(), platformRate: platformInfo.feeRate.toString(), creatorRate: platformInfo.creatorFeeRate.toString() },
       costDescription: "Simulated SOL debit for network fees and account rent. No initial buy. Venue fees come from Stonk's onchain configuration, not the TopBlast allocation." },

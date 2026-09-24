@@ -122,17 +122,24 @@ describe("Pump.fun signing and metadata", () => {
 
 describe("Pump.fun per-mint fee receipts", () => {
   it("accepts only the exact mint, sharing config, treasury and measured SOL delta", () => {
-    const mint = Keypair.generate().publicKey, treasury = Keypair.generate().publicKey, sharing = feeSharingConfigPda(mint);
+    const mint = Keypair.generate().publicKey, treasury = Keypair.generate().publicKey, sharing = feeSharingConfigPda(mint), bondingCurve = Keypair.generate().publicKey;
     const discriminator = (pumpIdl.events as Array<{ name: string; discriminator: number[] }>).find((event) => event.name.toLowerCase() === "distributecreatorfeesevent")!.discriminator;
     const instruction = { programId: PUMP_PROGRAM_ID.toBase58(), data: b58([228,69,165,46,81,203,154,29,...discriminator,0]) };
     vi.spyOn(PUMP_SDK, "decodeDistributeCreatorFeesEvent").mockReturnValue({
-      mint, sharingConfig: sharing, admin: treasury, quoteMint: PublicKey.default,
+      mint, bondingCurve, sharingConfig: sharing, admin: treasury, quoteMint: PublicKey.default,
       shareholders: [{ address: treasury, shareBps: 10_000 }], distributed: { toString: () => "100" },
     } as unknown as DistributeCreatorFeesEvent);
-    const market = { launch_id: "launch-a", launch_slot: 1, last_indexed_slot: 100, market_address: key(), base_mint: mint.toBase58(), quote_mint: "So11111111111111111111111111111111111111112", quote_token_program: TOKEN_PROGRAM_ID.toBase58(), creator_address: sharing.toBase58() };
+    const market = { launch_id: "launch-a", launch_slot: 1, last_indexed_slot: 100, market_address: bondingCurve.toBase58(), base_mint: mint.toBase58(), quote_mint: "So11111111111111111111111111111111111111112", quote_token_program: TOKEN_PROGRAM_ID.toBase58(), creator_address: sharing.toBase58() };
     const tx = { slot: 50, blockTime: 1790078400, meta: { err: null, fee: 10, preBalances: [1000], postBalances: [1090], innerInstructions: [{ instructions: [instruction] }] }, transaction: { signatures: ["receipt"], message: { accountKeys: [treasury.toBase58()], instructions: [] } } };
     expect(verifyPumpFeeDistribution(tx, "receipt", market, treasury, sharing)).toMatchObject({ amountAtoms: "100", quoteMint: market.quote_mint, sharingConfig: sharing.toBase58() });
     tx.meta.postBalances[0] = 1089;
     expect(() => verifyPumpFeeDistribution(tx, "receipt", market, treasury, sharing)).toThrow("destination delta");
+    tx.meta.postBalances[0] = 990;
+    vi.mocked(PUMP_SDK.decodeDistributeCreatorFeesEvent).mockReturnValue({ mint, bondingCurve, sharingConfig: sharing, admin: treasury, quoteMint: PublicKey.default, shareholders: [{ address: treasury, shareBps: 10_000 }], distributed: { toString: () => "0" } } as unknown as DistributeCreatorFeesEvent);
+    expect(verifyPumpFeeDistribution(tx, "receipt", market, treasury, sharing)).toMatchObject({ amountAtoms: "0" });
+    expect(() => verifyPumpFeeDistribution(tx, "receipt", { ...market, market_address: key() }, treasury, sharing)).toThrow("identity mismatch");
+    expect(() => verifyPumpFeeDistribution(tx, "receipt", { ...market, base_mint: key() }, treasury, sharing)).toThrow("identity mismatch");
+    expect(() => verifyPumpFeeDistribution(tx, "receipt", { ...market, launch_slot: 51 }, treasury, sharing)).toThrow("finalized proof");
+    expect(() => verifyPumpFeeDistribution({ ...tx, meta: { ...tx.meta, err: undefined } }, "receipt", market, treasury, sharing)).toThrow("finalized proof");
   });
 });

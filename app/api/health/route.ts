@@ -5,6 +5,7 @@ import { StonkFunAdapter } from "@/lib/venue/stonkfun-adapter";
 import { getTreasuryBalance } from "@/lib/solana/rpc";
 import { pumpCreationAvailable } from "@/lib/solana/pumpfun";
 import { controlledLaunchWallets } from "@/lib/test-launch-access";
+import { STONK_ATTRIBUTION_BLOCKER } from "@/lib/funding/stonk-auto";
 
 export const runtime = "nodejs";
 
@@ -68,8 +69,8 @@ export async function GET() {
   const pumpEnabled = process.env.PUMPFUN_ENABLED === "true";
   const pumpLaunchReady = readiness.launchReady && databaseReachable && pumpSchemaReady && pumpPairReady && pumpEnabled && treasuryRpcReachable;
   const ready = stonkLaunchReady || pumpLaunchReady;
-  const rewardsReady = ready && workerFresh && signerReady && !enginePaused && !readiness.dryRun && acceptedCycle;
-  const rewardBlockers = [!workerFresh && "Operational worker heartbeat", !signerReady && (signerError || "Railway treasury signer is not ready"), enginePaused && "Reward engine is paused", readiness.dryRun && "DRY_RUN is enabled", !acceptedCycle && "No accepted end-to-end payout proof yet"].filter(Boolean);
+  const rewardsReady = ready && !stonkLaunchReady && workerFresh && signerReady && !enginePaused && !readiness.dryRun && acceptedCycle;
+  const rewardBlockers = [stonkLaunchReady && STONK_ATTRIBUTION_BLOCKER, !workerFresh && "Operational worker heartbeat", !signerReady && (signerError || "Railway treasury signer is not ready"), enginePaused && "Reward engine is paused", readiness.dryRun && "DRY_RUN is enabled", !acceptedCycle && "No accepted end-to-end payout proof yet"].filter(Boolean);
   return NextResponse.json({
     status: ready ? "ready" : "configuration_required",
     ready,
@@ -78,7 +79,7 @@ export async function GET() {
     fundingReady: databaseReachable && !readiness.dryRun,
     venues: {
       stonkfun: { launchReady: stonkLaunchReady, pairReady: stonkPairReady, creationReady: stonkCreationReady,
-        creationMethod: "stonk_launchlab", rewardAsset: "selected_quote", fundingMode: "verified_creator_fee_forward",
+        creationMethod: "stonk_launchlab", rewardAsset: "selected_quote", fundingMode: "creator_fee_forward_attribution_required", automaticFundingReady: false, rewardsReady: false, rewardBlockers: [STONK_ATTRIBUTION_BLOCKER],
         blockers: [...readiness.missing, !readiness.launchesEnabled && "LAUNCHES_ENABLED is false", !databaseReachable && "Database unavailable",
           !pumpSchemaReady && "Launch metadata migration required", !stonkPairReady && "STONK pair unavailable", !stonkCreationReady && stonkCreationError, !treasuryRpcReachable && "Treasury RPC check incomplete"].filter(Boolean) },
       pumpfun: {
@@ -96,7 +97,7 @@ export async function GET() {
       },
     },
     rewardsReady,
-    rewardStatus: acceptedCycle ? rewardsReady ? "operational" : "configured_but_paused" : "acceptance_cycle_required",
+    rewardStatus: stonkLaunchReady ? "venue_attribution_required" : acceptedCycle ? rewardsReady ? "operational" : "configured_but_paused" : "acceptance_cycle_required",
     rewardBlockers,
     checks: {
       databaseConfigured: readiness.database,

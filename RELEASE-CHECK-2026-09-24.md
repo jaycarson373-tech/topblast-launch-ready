@@ -47,3 +47,20 @@ Official read-only sources:
 9. Resolve and repeat the Stonk forwarded-fee cycle before advertising both venues as live for automatic rewards.
 
 Local unit tests and unsigned mainnet simulations are not real payout receipts. No funds were moved by the read-only checks in this pass.
+
+## Follow-up: live Pump fees and creator payouts
+
+New Pump test mint `7vt4NxCCBRtyj4kkpiKNZRnHbgJkAww4qsDn4DxKeaM`, launch `7e72be4f-4503-44ec-9ed7-d724880a0e5d`:
+
+- Immutable per-mint setup confirmed at slot 450048324: `43Y6Vv2HZ65WZ8tzNG1eMRruAopV11g8naZ5Zk8MzN9JGW4Y9PgG2g4dCDAwmBUCqMCEgbkBfM9qidLTnxnXWcnU`.
+- Three automatic fee receipts credited 241604, 3422271 and 9007403 atoms. Holder allocation available: 9123319 atoms. These are actual confirmed receipts, not estimates.
+- Three creator distributions to `7NUcj2PUpASAbu5pPjKg4DULyhb9SD7yZsPN9zfk4EJ9` total 2280828 WSOL atoms. Finalized RPC independently confirmed successful checked transfers. Signatures: `VogSJWudUhTuD7U7gseraj5AkswdgDLyhYwkbEwv6WtLwrHHiTjSKmkeJGovnsW8sx1Yf55puGRoqEbaHZDDoQx`, `3Cv9xw2txsLyb7TZNTaYcTLpwKyV6kusYEvccFT94tbShEvTv45hifDu64Uu6MFdoRJYjaU7KHM7V2jWbj28AMdJ`, `28R6tKjLGAgaykMcHy32oZuLxExYuF2nFmWVWULZiJGZz15onAcrWHhEeSRMneRZPc2pb4ZDPKZTQnJPUeuU5XQE`.
+- First epoch completed at snapshot slot 450052030 with no payable allocations: five `SOLD_THIS_EPOCH`, one `NOT_A_VERIFIED_BUYER`. Reserved funds were returned to available. No holder payout is asserted.
+- Collection `47urtTnyEiS8o3oAuD2W4sEyjYaW9zEGoLyBDH7uUh6rpx1JAcAmbLZkqDCbLpnCCNqjTUDy84m6zrgxbh3a5qdm` finalized successfully with zero distributed at slot 450049981. Its treasury delta was exactly the 5000-lamport network fee. The old positive-only verifier left it stuck. Recovery now retains a confirmed empty receipt with no funding credit, and the worker rejects zero distributable balance before attempting another collection. No migration is needed; empty amount stays null and the verified zero is recorded in proof.
+- Stonk pool-vault transfer inference has been removed: a treasury sell can produce that same transfer. Standard Stonk fee credit remains blocked, now explicitly reported in health, launch review and worker diagnostics. The current public fee API is not an authenticated per-token payment ledger.
+
+### Exact Stonk integration dependency
+
+Request from Stonk: a supported authenticated receipt for each forwarded payment, containing its signature, creator, quote mint, and exact raw amount per token mint. The token allocations must sum to the finalized received amount, have stable single-use identifiers, and support pagination/recovery. Creator/quote aggregate totals and token lifetime accrual alone cannot establish the payment split. An alternative is a separately designed per-launch receiver scheme; that is a custody/launch architecture change, not a safe retrofit to already-created shared-receiver launches.
+
+Public release remains NO-GO pending that Stonk integration and a genuine eligible-holder payout plus restart verification. No transaction was manually signed or sent by these read-only acceptance checks; the deployed worker executed the user-enabled automatic operations.
