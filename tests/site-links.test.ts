@@ -9,7 +9,7 @@ describe("public footer destinations", () => {
   });
   it("uses the confirmed TopBlast X profile in the site configuration", async () => {
     const { getSiteLinks } = await import("../lib/site-links");
-    expect(getSiteLinks().x).toBe("https://x.com/Launch_Topblast");
+    expect(getSiteLinks().x).toBe("https://x.com/Topblast_pad");
     const nav = readFileSync(new URL("../components/site-nav.tsx", import.meta.url), "utf8");
     expect(nav).toContain('aria-label="TopBlast Launch on X"');
   });

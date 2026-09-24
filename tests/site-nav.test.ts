@@ -17,7 +17,7 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
 const render = async (featuredMint?: string) => {
-  await act(async () => root.render(createElement(SiteNav, { featuredMint, xUrl: "https://x.com/Launch_Topblast" })));
+  await act(async () => root.render(createElement(SiteNav, { featuredMint, xUrl: "https://x.com/Topblast_pad" })));
 };
 it("shows an empty bordered address control without inventing a mint or copying an empty value", async () => {
   await render();
@@ -26,7 +26,7 @@ it("shows an empty bordered address control without inventing a mint or copying 
   expect(button.disabled).toBe(true);
   await act(async () => button.click());
   expect(writeText).not.toHaveBeenCalled();
-  expect(container.querySelector('a[aria-label="TopBlast Launch on X"]')?.getAttribute("href")).toBe("https://x.com/Launch_Topblast");
+  expect(container.querySelector('a[aria-label="TopBlast Launch on X"]')?.getAttribute("href")).toBe("https://x.com/Topblast_pad");
   expect(container.querySelector('a[href^="/token/"]')).toBeNull();
 });
 it("copies the complete configured address, not its abbreviated display", async () => {

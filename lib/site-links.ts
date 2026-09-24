@@ -13,6 +13,6 @@ export function getSiteLinks() {
   return {
     dexscreener: publicLink(process.env.NEXT_PUBLIC_DEXSCREENER_URL, ["dexscreener.com", "www.dexscreener.com"]),
     stonk: publicLink(process.env.NEXT_PUBLIC_STONK_URL, ["stonkfun.xyz", "www.stonkfun.xyz"], "https://www.stonkfun.xyz")!,
-    x: publicLink(process.env.NEXT_PUBLIC_X_URL, ["x.com", "www.x.com", "twitter.com", "www.twitter.com"], "https://x.com/Launch_Topblast")!,
+    x: publicLink(process.env.NEXT_PUBLIC_X_URL, ["x.com", "www.x.com", "twitter.com", "www.twitter.com"], "https://x.com/Topblast_pad")!,
   };
 }
