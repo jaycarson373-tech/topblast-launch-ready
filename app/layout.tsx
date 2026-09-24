@@ -3,7 +3,7 @@ import "./globals.css";
 import { SiteNav } from "@/components/site-nav";
 import { SiteFooter } from "@/components/site-footer";
 import { PlatformProvider } from "@/components/platform-state";
-import { getAdminDb, isDatabaseConfigured } from "@/lib/db/server";
+import { registeredFeaturedToken } from "@/lib/db/featured-token";
 import { getSiteLinks } from "@/lib/site-links";
 
 export const metadata: Metadata = {
@@ -22,13 +22,10 @@ export const metadata: Metadata = {
   twitter: { card: "summary_large_image", title: "TopBlast Launch", description: "Launch underneath. Rewards on top.", images: ["https://topblast-stonkfun-launchpad.vercel.app/og-image.png"] },
 };
 
+export const revalidate = 30;
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const links = getSiteLinks();
-  let featuredMint: string | undefined;
-  if (process.env.FEATURED_TOKEN_MINT && isDatabaseConfigured()) {
-    const { data } = await getAdminDb().from("launches").select("mint,launch_signature").eq("mint", process.env.FEATURED_TOKEN_MINT).eq("is_test", false).eq("listing_hidden", false).in("status", ["active", "paused"]).maybeSingle();
-    if (data?.mint && data.launch_signature) featuredMint = data.mint;
-  }
+  const featuredMint = await registeredFeaturedToken();
   return (
     <html lang="en">
       <body>

@@ -12,6 +12,8 @@ import { reconcileStonkForwardedFees } from "../lib/funding/stonk-auto";
 import { processCreatorFeeDistribution } from "../lib/funding/creator-distribution";
 import { processPumpCreatorFees } from "../lib/funding/pump-auto";
 import { provisionStonkReceivers, processStonkReceiver } from "../lib/funding/stonk-isolated";
+import { ensureTopblastCreatorLaunch } from "../lib/db/topblast-import";
+import { processTopblastCreatorFees } from "../lib/funding/topblast-creator";
 
 const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -53,6 +55,13 @@ async function runCycle() {
   });
   if (heartbeatError) throw heartbeatError;
   try {
+    const result = await ensureTopblastCreatorLaunch(db, owner);
+    await db.from("system_config").upsert({ key: "topblast_creator_health", value: { ...result, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "TOPBLAST creator registration failed";
+    await db.from("system_config").upsert({ key: "topblast_creator_health", value: { status: "error", message, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
+  }
+  try {
     await provisionStonkReceivers(db, owner);
     await db.from("system_config").upsert({ key: "stonk_receiver_health", value: { ready: !dryRun && signer.ready, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
   } catch (error) {
@@ -79,9 +88,10 @@ async function runCycle() {
   for (const market of markets ?? []) {
     if (market.venue === "stonkfun") {
       try {
-        const result = await processStonkReceiver(db, market, owner);
+        const dedicatedTopblast = market.base_mint === process.env.TOPBLAST_TOKEN_MINT && market.creator_address === process.env.TOPBLAST_CREATOR_ADDRESS;
+        const result = dedicatedTopblast ? await processTopblastCreatorFees(db, market, owner) : await processStonkReceiver(db, market, owner);
         const legacy = result.status === "legacy_attribution_required" ? await reconcileStonkForwardedFees(db, market) : null;
-        const diagnostic = await db.from("system_config").upsert({ key: `stonk_fee_status:${market.launch_id}`, value: { status: result.status, message: legacy?.reason ?? null, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
+        const diagnostic = await db.from("system_config").upsert({ key: `stonk_fee_status:${market.launch_id}`, value: { ...result, message: legacy?.reason ?? null, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
         if (diagnostic.error) throw diagnostic.error;
       } catch (error) {
         const message = error instanceof Error ? error.message : "Isolated Stonk receiver failed";

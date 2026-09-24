@@ -10,7 +10,7 @@ const irrelevant = { version: 1, meta: { err: null }, transaction: { signatures:
 function database() {
   const writes: Array<{ table: string; values: Record<string, unknown> }> = [];
   const db = { rpc: vi.fn(async () => ({ data: true, error: null })), from: (table: string) => {
-    const chain = { eq: () => chain, lte: () => chain, in: () => chain, then: (resolve: (value: unknown) => unknown) => Promise.resolve({ error: null }).then(resolve) };
+    const chain = { eq: () => chain, lte: () => chain, in: () => chain, select: () => chain, maybeSingle: async () => ({ data: { launch_id: "a" }, error: null }), then: (resolve: (value: unknown) => unknown) => Promise.resolve({ error: null }).then(resolve) };
     return { update: (values: Record<string, unknown>) => { writes.push({ table, values }); return chain; }, upsert: (values: Record<string, unknown>) => { writes.push({ table, values }); return Promise.resolve({ error: null }); } };
   } };
   return { db: db as unknown as SupabaseClient, writes };
@@ -35,12 +35,12 @@ describe("finalized market reconciliation", () => {
     // This fixture has no swap. Passing it to the decoder must not fabricate one.
     expect(db.rpc).not.toHaveBeenCalledWith("apply_wallet_activity", expect.anything());
   });
-  it("accepts parsed v1 blocks, keeps finality and checkpoints every completed block", async () => {
+  it("accepts parsed v1 blocks and checkpoints complete ordered windows without a write per irrelevant block", async () => {
     const { db, writes } = database();
     expect(await reconcileMarket(db, market, "worker")).toBe(true);
     expect(mock.rpc).toHaveBeenCalledWith("getBlock", [100, expect.objectContaining({ encoding: "jsonParsed", commitment: "finalized", maxSupportedTransactionVersion: 1 })]);
     expect(writes[0].table).toBe("price_observations");
-    expect(writes.filter(w => w.table === "tracked_markets").map(w => w.values.last_indexed_slot)).toEqual([100, 101, 101]);
+    expect(writes.filter(w => w.table === "tracked_markets").map(w => w.values.last_indexed_slot)).toEqual([101, 101]);
     expect(writes.at(-1)?.values.history_complete).toBe(true);
   });
   it("retains price and completed-block progress without skipping an unavailable block", async () => {

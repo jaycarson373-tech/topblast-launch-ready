@@ -22,11 +22,33 @@ configuration that names this wallet. It cannot sign another launch's payouts.
 All existing launches retain their original treasury. Missing or mismatched
 configuration stops signing; there is no fallback to the platform wallet.
 
-This signing support is not a completed external-launch integration. A bundle
-launch still needs verified registration, attributable funding receipts and a
-real funded holder payout. Adding a CA and redeploying does not perform those
-steps, grant fee rights, credit balances, or prove that rewards work. Do not
-announce full readiness until the complete cycle has been demonstrated.
+Setting `TOPBLAST_TOKEN_MINT` starts an idempotent external Stonk registration
+check. It verifies the official token listing, actual creation instruction,
+mint, pool, creator, quote asset and mint decimals. Only a matching finalized
+creation receipt and a registered tracker can publish the token. No fake launch
+submission or payment receipt is created, and the worker never launches a second
+token on retry. For unusually long market histories, the optional
+`TOPBLAST_LAUNCH_SIGNATURE` supplies the exact creation receipt.
+
+For this dedicated wallet, the funding reader verifies that it owns exactly one
+LaunchLab pool. It uses the official Stonk fee response's transaction signature
+to identify the forwarding source, then verifies exact SPL transfers, mint,
+decimals, source authority, recipient and both account balance deltas. Receipts
+must be finalized and inside indexed history; duplicates are consumed once by
+the existing atomic funding function. Credited totals cannot exceed Stonk's
+reported forwarded total. Donations, gas SOL and projected fees are not credits.
+Multiple pools, unsupported token programs, ambiguous transfers or unavailable
+history stop new funding rather than guess. Never reuse this creator wallet for
+another token.
+
+Verified funds use the existing immutable 90% holder / 0% creator / 10% protocol
+allocation and existing epoch, loss weighting, reservation and durable payout
+pipeline. Holder transfers are signed only by this mint's creator key. A protocol
+ledger credit is not evidence of an executed buyback or burn.
+
+Implementation and fixture tests do not prove live TOPBLAST payouts. Its complete
+real funded holder-payout and restart cycle still requires acceptance after the
+mint exists. Do not announce full readiness until that cycle is demonstrated.
 
 Never place the secret in chat, Git, Supabase, Vercel, browser storage, or a
 `NEXT_PUBLIC_` variable. Use Railway's sealed-variable setting for the secret.
@@ -52,6 +74,10 @@ listing, or changes the New/Volume sorting. Use exact CAs, never token names.
 TOPBLAST created by a bundle service is a Stonk launch registered with TopBlast
 rewards, not a launch transaction submitted by the TopBlast website. Do not
 fabricate a platform submission receipt.
+After verified registration, the worker publishes only the public mint to
+`system_config.topblast_registered_mint`. The web app reads that for the header
+CA and appends it after the configured TOP Featured placement. Creator secrets
+remain exclusively on Railway; this publication needs no Vercel secret.
 
 ## Current TOP acceptance check, September 24
 
@@ -69,3 +95,15 @@ After the owner added operating SOL, the worker confirmed receiver gas funding:
 This is a 0.01 SOL operating transfer, **not a holder reward**. Stonk's official
 creator-fee diagnostic then reported zero accrued / forwarded fees and a $5
 forwarding threshold. No holder distribution was recorded at that check.
+
+## Reuse and evidence
+
+The single-token worker's `stonk-launchlab-funding.mjs` supplied the exact-route,
+authority and account-delta verification pattern. The multi-token system retains
+its existing entry, eligibility, epoch, allocation and payout modules. The old
+worker's unrelated funding-tranche economics were not copied.
+
+Archived public receipt `ahQxnD37aUc4rfRmUTdgebkHKdrjv87ySJ1CWuKu4EVLBHeLWzdEijs1xjU1XZ99Vrs3EzjvrAAEtQegKruUj1G`
+at slot 450084897 verifies an actual 101790550-atom WSOL Stonk forward to a
+third-party creator. It is read-only format evidence, **not a TOP or TOPBLAST
+payout**. The exact public receipt and TOP creation transaction are test fixtures.

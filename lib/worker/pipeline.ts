@@ -35,6 +35,7 @@ export async function reconcileMarket(db: SupabaseClient, row: MarketRow, owner:
   await recordMarketPrice(db, row);
   const finalizedSlot = await solanaRpc<number>("getSlot", [{ commitment: "finalized" }]);
   let cursor = Math.max(Number(row.last_indexed_slot ?? 0), Number(row.launch_slot) - 1);
+  let persistedCursor = Number(row.last_indexed_slot ?? 0);
   const end = Math.min(finalizedSlot, cursor + Math.max(10, Number(process.env.INDEX_BLOCK_BATCH_SIZE ?? 100)));
   let blockhash = row.last_indexed_blockhash ?? null;
   const startedAt = Date.now();
@@ -48,6 +49,9 @@ export async function reconcileMarket(db: SupabaseClient, row: MarketRow, owner:
     scan: for (let offset = 0; offset < produced.length; offset += width) {
       const slots = produced.slice(offset, offset + width);
       const blocks = await Promise.allSettled(slots.map(slot => solanaRpc<{ blockhash: string; previousBlockhash: string; blockTime: number | null; transactions: FinalizedBlockTransaction[] } | null>("getBlock", [slot, { commitment: "finalized", encoding: "jsonParsed", transactionDetails: "full", rewards: false, maxSupportedTransactionVersion: 1 }])));
+      const windowStart = cursor;
+      let leaseOwned = true;
+      try {
       for (const [index, slot] of slots.entries()) {
       // RPC parses legacy/v0/v1 into the same instruction/account JSON. No
       // legacy SDK wire decoder is used here and v1 compute-fee headers are not basis.
@@ -56,7 +60,7 @@ export async function reconcileMarket(db: SupabaseClient, row: MarketRow, owner:
       const block = result.value;
       if (!block) throw new Error(`Finalized block ${slot} is unavailable`);
       if (Date.now() - leaseRenewedAt >= 20_000) {
-        if (!await claim(db, "market", row.launch_id, owner)) throw new Error("Market lease lost; stopping reconciliation");
+        if (!await claim(db, "market", row.launch_id, owner)) { leaseOwned = false; throw new Error("Market lease lost; stopping reconciliation"); }
         leaseRenewedAt = Date.now();
       }
       if (blockhash && block.previousBlockhash !== blockhash) throw new Error(`Finalized chain continuity failed at slot ${slot}`);
@@ -81,9 +85,19 @@ export async function reconcileMarket(db: SupabaseClient, row: MarketRow, owner:
       }
       blockhash = block.blockhash;
       cursor = slot;
-      const checkpoint = await db.from("tracked_markets").update({ last_indexed_slot: cursor, last_indexed_blockhash: blockhash, history_complete: false }).eq("launch_id", row.launch_id);
-      if (checkpoint.error) throw checkpoint.error;
       if (Date.now() - startedAt > 45_000) break scan;
+      }
+      } finally {
+        if (leaseOwned && cursor > windowStart) {
+          // Activity writes are already idempotent. One checkpoint per bounded
+          // fetch window avoids a network round trip for every irrelevant block.
+          // On failure, save only fully applied blocks; a restart replays safely.
+          const checkpoint = await db.from("tracked_markets").update({ last_indexed_slot: cursor, last_indexed_blockhash: blockhash, history_complete: false })
+            .eq("launch_id", row.launch_id).eq("last_indexed_slot", persistedCursor).select("launch_id").maybeSingle();
+          if (checkpoint.error) throw checkpoint.error;
+          if (!checkpoint.data) throw new Error("Market checkpoint moved by another worker; retry from persisted history");
+          persistedCursor = cursor;
+        }
       }
     }
     // Only skip unproduced slots after every produced block was processed.
@@ -93,8 +107,9 @@ export async function reconcileMarket(db: SupabaseClient, row: MarketRow, owner:
   const checkpoint = await db.from("tracked_markets").update({
     last_indexed_slot: cursor, last_indexed_blockhash: blockhash, history_complete: cursor >= finalizedSlot, price_status: "fresh",
     last_reconciled_at: new Date().toISOString(), updated_at: new Date().toISOString(), tracker_error: null,
-  }).eq("launch_id", row.launch_id);
+  }).eq("launch_id", row.launch_id).eq("last_indexed_slot", persistedCursor).select("launch_id").maybeSingle();
   if (checkpoint.error) throw checkpoint.error;
+  if (!checkpoint.data) throw new Error("Market checkpoint moved by another worker; finality cannot be asserted");
   return cursor >= finalizedSlot;
 }
 
