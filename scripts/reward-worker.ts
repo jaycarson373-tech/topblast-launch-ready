@@ -10,6 +10,7 @@ import { submitBoundLaunch } from "../lib/venue/launch-submission-service";
 import { automaticPayoutReadiness, automaticPayoutsConfigured, processAutomaticPayout } from "../lib/payout/automatic";
 import { reconcileStonkForwardedFees } from "../lib/funding/stonk-auto";
 import { processCreatorFeeDistribution } from "../lib/funding/creator-distribution";
+import { processPumpCreatorFees } from "../lib/funding/pump-auto";
 
 const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -67,6 +68,16 @@ async function runCycle() {
   if (marketError) throw marketError;
   await Promise.all((markets ?? []).map(async (market) => {
     let historyReady = false;
+    if (market.venue === "pumpfun") {
+      try {
+        const result = await processPumpCreatorFees(db, market, owner);
+        if (!['disabled', 'idle'].includes(result.status)) process.stdout.write(`${market.launch_id}: Pump fee routing ${JSON.stringify(result)}\n`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Pump fee routing failed";
+        await db.from("system_config").upsert({ key: `pump_fee_error:${market.launch_id}`, value: { message, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
+        process.stderr.write(`${market.launch_id}: Pump fee routing failed: ${message}\n`);
+      }
+    }
     try {
       historyReady = await reconcileMarket(db, market, owner) === true;
       if (!historyReady) needsBackfill = true;

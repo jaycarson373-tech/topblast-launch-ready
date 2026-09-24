@@ -19,7 +19,7 @@ export default function Home() {
       <article><span>02 / FUND</span><h3>Verified fees fund.</h3><p>Each attributable fee receipt funds only its launch.</p></article>
       <article><span>03 / BLAST</span><h3>Eligible holders share.</h3><p>Eligible holders below entry share the funded rewards.</p></article>
     </section>
-    <section className="funding-truth"><div className="shell"><strong>Verified fees in. Direct holder airdrops out.</strong><p>Stonk creator-fee forwards are matched to the exact launch before funding its isolated pool. Pump remains beta until creator-wide fees can be attributed safely.</p></div></section>
+    <section className="funding-truth"><div className="shell"><strong>Verified fees in. Direct holder airdrops out.</strong><p>Stonk fee forwards and Pump per-mint fee-sharing receipts are matched to one launch before funding its isolated pool.</p></div></section>
     <section className="shell how"><div><div className="eyebrow">BOUGHT IN. PRICE DROPPED. STILL HOLDING?</div><h2>YOUR ENTRY<br />SETS THE LINE.</h2><p className="hero-copy">TopBlast rewards participation. It does not promise to recover losses.</p></div>
       <div className="blast-diagram"><div><span>YOUR VERIFIED ENTRY</span><b /></div><p>Current price below</p><div className="blast-zone">BLAST ZONE</div><small>A verified market buy. Retained eligible tokens. No sell or outgoing transfer in the epoch. A finalized snapshot. A funded pool. Every condition matters.</small><Link href="/docs#eligibility" className="text-link">Read the eligibility rules →</Link></div>
     </section>

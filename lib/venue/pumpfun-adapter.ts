@@ -60,7 +60,7 @@ export class PumpFunAdapter implements LaunchVenueAdapter {
     if (!Number.isSafeInteger(after) || after! < 0 || after! >= before.value) throw new Error("Cannot verify Pump.fun creation cost");
     const lamports = String(before.value - after!);
     const expiresAt = await launchReviewExpiry(latest.value.lastValidBlockHeight);
-    return { signedQuote: JSON.stringify({ venue: this.venue, mint: input.pumpMint, pool: bondingCurvePda(mint).toBase58(), quoteMint: input.quoteMint, feeRecipient: feeRecipient.toBase58(), metadataId, lastValidBlockHeight: latest.value.lastValidBlockHeight }), paymentTransaction: wire, payment: { lamports, sol: Number(lamports) / 1e9, recipient: PUMP_PROGRAM_ID.toBase58() }, expiresAt, raw: { fundingMode: "explicit_creator_deposit", rewardAsset: input.quoteSymbol, feeRecipient: feeRecipient.toBase58(), nativeHolderRewards: false, simulation: "passed", costDescription: "Simulated SOL debit including network fee and account creation. No initial token purchase." } };
+    return { signedQuote: JSON.stringify({ venue: this.venue, mint: input.pumpMint, pool: bondingCurvePda(mint).toBase58(), quoteMint: input.quoteMint, feeRecipient: feeRecipient.toBase58(), metadataId, lastValidBlockHeight: latest.value.lastValidBlockHeight }), paymentTransaction: wire, payment: { lamports, sol: Number(lamports) / 1e9, recipient: PUMP_PROGRAM_ID.toBase58() }, expiresAt, raw: { fundingMode: "pump_per_mint_fee_sharing", rewardAsset: input.quoteSymbol, feeRecipient: feeRecipient.toBase58(), nativeHolderRewards: false, simulation: "passed", costDescription: "Simulated SOL debit including network fee and account creation. No initial token purchase. TopBlast activates the official per-mint Pump fee-sharing route after finalization." } };
   }
   async submitLaunch(input: { signedQuote: string; signedTransaction: string; logo: string }): Promise<SubmittedLaunch> {
     // The shared submission service has already bound and validated this exact message.
@@ -96,12 +96,12 @@ export class PumpFunAdapter implements LaunchVenueAdapter {
   async getCreatorFees(mint: string) {
     const { curve } = await readPumpCurve(mint, bondingCurvePda(new PublicKey(mint)).toBase58());
     const vault = creatorVaultPda(curve.creator).toBase58();
-    return { claimable: null, reason: "Creator vaults aggregate fees across coins. Claim on Pump.fun, then explicitly fund this launch. Vault balance is not attributed launch revenue.", scope: "creator", raw: { creator: curve.creator.toBase58(), vault } };
+    return { claimable: null, reason: "TopBlast uses Pump.fun’s official per-mint fee-sharing config. The worker distributes and credits only finalized receipts for this mint.", scope: "launch", raw: { creator: curve.creator.toBase58(), vault } };
   }
   async getMarketData(mint: string, expectedPool: string) {
     await readPumpCurve(mint, expectedPool);
     return { priceUsd: null, marketCapUsd: null, volume24hUsd: null, liquidityUsd: null, raw: { reason: "USD metrics unavailable; the finalized selected-quote chart is provided separately" } };
   }
-  async prepareCreatorFeeClaim(): Promise<PreparedFeeClaim> { throw new Error("Claim creator-wide fees on Pump.fun, then use the attributed launch deposit action"); }
-  async claimCreatorFees(): Promise<{ signature: string; alreadySubmitted: boolean; raw: Record<string, unknown> }> { throw new Error("Direct fee claiming is not enabled. Use Pump.fun creator fee claims."); }
+  async prepareCreatorFeeClaim(): Promise<PreparedFeeClaim> { throw new Error("Pump fee sharing is operated by the isolated TopBlast worker after per-mint setup"); }
+  async claimCreatorFees(): Promise<{ signature: string; alreadySubmitted: boolean; raw: Record<string, unknown> }> { throw new Error("Pump per-mint fee sharing is worker-managed and idempotent"); }
 }

@@ -1,4 +1,4 @@
-import { PUMP_SDK, PUMP_PROGRAM_ID, bondingCurvePda, GLOBAL_PDA } from "./pump-sdk";
+import { PUMP_SDK, PUMP_PROGRAM_ID, bondingCurvePda, feeSharingConfigPda, GLOBAL_PDA } from "./pump-sdk";
 import { getAssociatedTokenAddressSync, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, NATIVE_MINT } from "@solana/spl-token";
 import { PublicKey } from "@solana/web3.js";
 import { solanaRpc } from "./rpc";
@@ -47,7 +47,7 @@ export async function inspectPumpQuoteMint(mint: string) {
 export async function inspectPumpMarket(input: { mint: string; pool: string; quoteMint: string; creator: string; launchSignature?: string | null }) {
   const { curve } = await readPumpCurve(input.mint, input.pool);
   if (normalizedPumpQuote(curve.quoteMint).toBase58() !== input.quoteMint) throw new Error("Pump.fun curve quote mint mismatch");
-  if (![input.creator, process.env.TOPBLAST_TREASURY_ADDRESS].includes(curve.creator.toBase58())) throw new Error("Pump.fun creator identity mismatch");
+  if (![input.creator, process.env.TOPBLAST_TREASURY_ADDRESS, feeSharingConfigPda(new PublicKey(input.mint)).toBase58()].includes(curve.creator.toBase58())) throw new Error("Pump.fun creator identity mismatch");
   const mint = await solanaRpc<{ value: { owner: string; data: { parsed: { type: string; info: { decimals: number } } } } | null }>("getAccountInfo", [input.mint, { encoding: "jsonParsed", commitment: "finalized" }]);
   if (mint.value?.owner !== TOKEN_2022_PROGRAM_ID.toBase58() || mint.value.data?.parsed?.type !== "mint" || mint.value.data.parsed.info.decimals !== 6) throw new Error("Unexpected Pump.fun mint program or decimals");
   if (!input.launchSignature) throw new Error("Finalized creation signature is required");

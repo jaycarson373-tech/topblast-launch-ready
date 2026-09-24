@@ -43,5 +43,5 @@ async function readTrades(row: Record<string, unknown>): Promise<RecentTrades> {
 
 export function mergeTokenTrades(indexed: PublicTrade[], recent: PublicTrade[]) {
   const receipts = new Set(recent.map(item => item.signature));
-  return [...recent, ...indexed.filter(item => !receipts.has(item.signature))].sort((a, b) => b.slot - a.slot).slice(0, 100);
+  return [...recent, ...indexed.filter(item => !receipts.has(item.signature))].sort((a, b) => b.slot - a.slot);
 }

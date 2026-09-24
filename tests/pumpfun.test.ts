@@ -5,8 +5,9 @@ import recordedBuy from "./fixtures/pump-mainnet-buy.json";
 import { activityOrdinal } from "@/lib/worker/pipeline";
 import { buildEpochPlan } from "@/lib/rewards/epoch";
 import { emptyPosition } from "@/lib/rewards/position";
-import { PUMP_SDK, PUMP_PROGRAM_ID, PUMP_EVENT_AUTHORITY_PDA, GLOBAL_PDA, creatorVaultPda, type TradeEventBc } from "@/lib/solana/pump-sdk";
+import { PUMP_SDK, PUMP_PROGRAM_ID, PUMP_EVENT_AUTHORITY_PDA, GLOBAL_PDA, creatorVaultPda, feeSharingConfigPda, pumpIdl, type DistributeCreatorFeesEvent, type TradeEventBc } from "@/lib/solana/pump-sdk";
 import { decodeFinalizedPumpTransaction } from "@/lib/indexer/pumpfun-decoder";
+import { verifyPumpFeeDistribution } from "@/lib/funding/pump-auto";
 import { validatePumpImage } from "@/lib/venue/pumpfun-adapter";
 import { inspectSignedMessage } from "@/lib/solana/signed-message";
 import { createHash } from "node:crypto";
@@ -103,5 +104,22 @@ describe("Pump.fun signing and metadata", () => {
     expect(() => validatePumpImage("data:image/svg+xml;base64,AA==")).toThrow();
     expect(() => validatePumpImage("data:image/png;base64,PHNjcmlwdD4=")).toThrow();
     expect(validatePumpImage(`data:image/png;base64,${Buffer.from([137,80,78,71,13,10,26,10]).toString("base64")}`).contentType).toBe("image/png");
+  });
+});
+
+describe("Pump.fun per-mint fee receipts", () => {
+  it("accepts only the exact mint, sharing config, treasury and measured SOL delta", () => {
+    const mint = Keypair.generate().publicKey, treasury = Keypair.generate().publicKey, sharing = feeSharingConfigPda(mint);
+    const discriminator = (pumpIdl.events as Array<{ name: string; discriminator: number[] }>).find((event) => event.name.toLowerCase() === "distributecreatorfeesevent")!.discriminator;
+    const instruction = { programId: PUMP_PROGRAM_ID.toBase58(), data: b58([228,69,165,46,81,203,154,29,...discriminator,0]) };
+    vi.spyOn(PUMP_SDK, "decodeDistributeCreatorFeesEvent").mockReturnValue({
+      mint, sharingConfig: sharing, admin: treasury, quoteMint: PublicKey.default,
+      shareholders: [{ address: treasury, shareBps: 10_000 }], distributed: { toString: () => "100" },
+    } as unknown as DistributeCreatorFeesEvent);
+    const market = { launch_id: "launch-a", launch_slot: 1, last_indexed_slot: 100, market_address: key(), base_mint: mint.toBase58(), quote_mint: "So11111111111111111111111111111111111111112", quote_token_program: TOKEN_PROGRAM_ID.toBase58(), creator_address: sharing.toBase58() };
+    const tx = { slot: 50, blockTime: 1790078400, meta: { err: null, fee: 10, preBalances: [1000], postBalances: [1090], innerInstructions: [{ instructions: [instruction] }] }, transaction: { signatures: ["receipt"], message: { accountKeys: [treasury.toBase58()], instructions: [] } } };
+    expect(verifyPumpFeeDistribution(tx, "receipt", market, treasury, sharing)).toMatchObject({ amountAtoms: "100", quoteMint: market.quote_mint, sharingConfig: sharing.toBase58() });
+    tx.meta.postBalances[0] = 1089;
+    expect(() => verifyPumpFeeDistribution(tx, "receipt", market, treasury, sharing)).toThrow("destination delta");
   });
 });

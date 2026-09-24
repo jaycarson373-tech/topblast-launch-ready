@@ -2,7 +2,7 @@ import { isAddress } from "@solana/addresses";
 
 type RpcEnvelope<T> = { jsonrpc?: string; id?: number; result?: T; error?: { code: number; message: string } };
 
-function rpcUrl(): string {
+export function solanaRpcUrl(): string {
   if (process.env.SOLANA_RPC_URL) return process.env.SOLANA_RPC_URL;
   if (process.env.HELIUS_API_KEY) return `https://mainnet.helius-rpc.com/?api-key=${encodeURIComponent(process.env.HELIUS_API_KEY)}`;
   throw new Error("SOLANA_RPC_URL or HELIUS_API_KEY is required");
@@ -10,7 +10,7 @@ function rpcUrl(): string {
 
 export async function solanaRpc<T>(method: string, params: unknown[] = []): Promise<T> {
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const response = await fetch(rpcUrl(), {
+    const response = await fetch(solanaRpcUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),

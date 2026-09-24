@@ -6,12 +6,13 @@ import {
   verifyFinalizedSignedTransaction,
 } from "@/lib/solana/checked-transfers";
 import { solanaRpc } from "@/lib/solana/rpc";
+import { NATIVE_MINT } from "@solana/spl-token";
 
 export async function preparePayoutBatch(batchId: string) {
   const db = getAdminDb();
   const { data: batch, error } = await db.from("payout_batches").select("*").eq("id", batchId).single();
   if (error) throw error;
-  const { data: launch, error: launchError } = await db.from("launches").select("status").eq("id", batch.launch_id).single();
+  const { data: launch, error: launchError } = await db.from("launches").select("status,venue").eq("id", batch.launch_id).single();
   if (launchError) throw launchError;
   if (launch.status !== "active") throw new Error("This launch is paused; payout preparation is locked");
   if (batch.status === "prepared") return batch;
@@ -26,6 +27,7 @@ export async function preparePayoutBatch(batchId: string) {
     payer: treasury, mint: batch.asset_mint,
     transfers: manifest.map((item) => ({ recipient: item.wallet, amountAtoms: BigInt(item.amountAtoms) })),
     memo: `TOPBLAST:PAYOUT:${batch.launch_id}:${batch.epoch_id}:${batch.id}`,
+    wrapNative: launch.venue === "pumpfun" && batch.asset_mint === NATIVE_MINT.toBase58(),
   });
   const { data, error: updateError } = await db.from("payout_batches").update({
     status: "prepared", unsigned_transaction: prepared.unsignedTransaction, unsigned_message_hash: prepared.messageHash,

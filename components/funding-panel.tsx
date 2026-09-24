@@ -107,7 +107,7 @@ export function FundingPanel({ launchId, creatorWallet, venue = "stonkfun", asse
 
   return <div className="funding-card">
     <div className="section-label">Optional reward top-up</div>
-    {venue === "pumpfun" && <p className="notice">Fund with the launch’s selected quote asset. SOL-paired launches wrap SOL into WSOL; token-paired launches transfer that exact token. No swap is involved. <a href="https://pump.fun" target="_blank" rel="noreferrer">Claim fees on Pump.fun</a></p>}
+    {venue === "pumpfun" && <p className="notice">Optional top-up: fund with the selected quote asset. SOL-paired launches wrap SOL into WSOL; token-paired launches transfer that exact token. Automatic Pump creator fees use the launch’s official per-mint fee-sharing config.</p>}
     <p className="notice">Add extra reward funding beyond verified automatic venue-fee funding. The fixed launch allocation applies to this top-up too.</p>
     {!fundingEnabled && <p className="error" role="status">Funding locked: dry-run mode or unavailable health checks. No new deposit is required. Saved receipts can still be verified below.</p>}
     {fundingEnabled && !account && <div className="lookup"><select aria-label="Solana wallet" value={walletName} onChange={(event) => setWalletName(event.target.value)}>{wallets.map((item) => <option key={item.name}>{item.name}</option>)}</select><button className="button button-secondary" type="button" onClick={() => void connect().catch((error) => setMessage(error.message))}>Connect creator</button></div>}

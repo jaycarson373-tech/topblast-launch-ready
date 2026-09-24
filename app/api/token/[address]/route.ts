@@ -23,7 +23,7 @@ export async function GET(_request: Request, context: { params: Promise<{ addres
     db.from("reward_allocations").select("epoch_id,wallet,amount_atoms,eligible_loss_quote_atoms").eq("launch_id", launch.id).limit(5000),
     db.from("payout_batches").select("id,epoch_id,status,amount_atoms,manifest_hash,signature,submitted_at,confirmed_at,error_message").eq("launch_id", launch.id).order("created_at", { ascending: false }),
     db.from("system_config").select("value").eq("key", "reward_engine_paused").maybeSingle(),
-    db.from("wallet_activity").select("id,wallet,signature,event_index,kind,token_raw,quote_atoms,slot,block_time").eq("launch_id", launch.id).in("kind", ["verified_buy", "sell"]).order("slot", { ascending: false }).order("event_index", { ascending: false }).limit(100),
+    db.from("wallet_activity").select("id,wallet,signature,event_index,kind,token_raw,quote_atoms,slot,block_time").eq("launch_id", launch.id).in("kind", ["verified_buy", "sell"]).order("slot", { ascending: false }).order("event_index", { ascending: false }),
     db.from("wallet_positions").select("wallet", { count: "exact", head: true }).eq("launch_id", launch.id).gt("balance_raw", 0),
   ]);
   const [marketData, recent] = await Promise.all([

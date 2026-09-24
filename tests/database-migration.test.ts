@@ -18,6 +18,7 @@ describe("Supabase migrations", () => {
     await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609220001_public_listing_controls.sql"), "utf8"));
     await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609220003_automatic_creator_fees.sql"), "utf8"));
     await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609230001_epoch_release_policy.sql"), "utf8"));
+    await db.exec(await readFile(join(process.cwd(), "supabase/migrations/202609240001_pump_fee_sharing.sql"), "utf8"));
     await db.exec("set role service_role");
     await db.query("insert into public.launch_metadata(id,metadata,image_data) values('00000000-0000-4000-8000-000000000099','{}','test-image')");
     await expect(db.query("update public.launch_metadata set image_data='overwritten'")).rejects.toThrow();
@@ -78,6 +79,14 @@ describe("Supabase migrations", () => {
     const bPaid = await db.query<{ paid_atoms: string }>("select paid_atoms from public.launch_funding_balances where launch_id=$1", [b]);
     expect(aPaid.rows[0].paid_atoms).toBe("45");
     expect(bPaid.rows[0].paid_atoms).toBe("0");
+    await db.query("insert into public.tracked_markets(launch_id,venue,market_address,base_mint,quote_mint,launch_slot,last_indexed_slot,active) values($1,'pumpfun','pump-market','pump-mint','stonk',1,100,true)", [b]);
+    const pumpOperation = await db.query<{ id: string }>("insert into public.pump_fee_operations(launch_id,kind,status,idempotency_key,signature,amount_atoms,slot,proof) values($1,'distribute','confirmed','pump-distribute-test','pump-fee-one',100,50,$2::jsonb) returning id", [b, JSON.stringify({ blockTime: new Date().toISOString() })]);
+    const pumpCredited = await db.query<{ credit_pump_shared_fee: boolean }>("select public.credit_pump_shared_fee($1,$2,'pump-fee-one',100,50,now(),'{}'::jsonb)", [pumpOperation.rows[0].id, b]);
+    const pumpDuplicate = await db.query<{ credit_pump_shared_fee: boolean }>("select public.credit_pump_shared_fee($1,$2,'pump-fee-one',100,50,now(),'{}'::jsonb)", [pumpOperation.rows[0].id, b]);
+    expect(pumpCredited.rows[0].credit_pump_shared_fee).toBe(true);
+    expect(pumpDuplicate.rows[0].credit_pump_shared_fee).toBe(false);
+    await expect(db.query("select public.credit_pump_shared_fee($1,$2,'pump-fee-one',100,50,now(),'{}'::jsonb)", [pumpOperation.rows[0].id, a])).rejects.toThrow("does not match");
+    expect((await db.query<{ available_atoms: string }>("select available_atoms from public.launch_funding_balances where launch_id=$1", [b])).rows[0].available_atoms).toBe("140");
     // Public views hide tests even for a service-role caller that bypasses RLS.
     expect((await db.query<{ id: string }>("select id from public.launch_explore")).rows).toEqual([{ id: a }]);
     expect((await db.query<{ launch_id: string }>("select launch_id from public.launch_funding_public")).rows).toEqual([{ launch_id: a }]);

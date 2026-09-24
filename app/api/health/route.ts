@@ -37,8 +37,11 @@ export async function GET() {
     // A lone distribution is not evidence of a complete launch-to-restart cycle.
     const acceptance = data?.find((row) => row.key === "production_acceptance")?.value as { verified?: boolean; evidenceUrl?: string; restartVerified?: boolean } | undefined;
     acceptedCycle = (count ?? 0) > 0 && acceptance?.verified === true && acceptance.restartVerified === true && typeof acceptance.evidenceUrl === "string" && acceptance.evidenceUrl.startsWith("https://");
-    const pumpSchema = await getAdminDb().from("launch_metadata").select("id").limit(1);
-    pumpSchemaReady = !pumpSchema.error;
+    const [pumpMetadataSchema, pumpFeeSchema] = await Promise.all([
+      getAdminDb().from("launch_metadata").select("id").limit(1),
+      getAdminDb().from("pump_fee_operations").select("id").limit(1),
+    ]);
+    pumpSchemaReady = !pumpMetadataSchema.error && !pumpFeeSchema.error;
   }
   try {
     const mint = process.env.STONK_QUOTE_MINT ?? "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx";
@@ -80,12 +83,12 @@ export async function GET() {
           !pumpSchemaReady && "Launch metadata migration required", !stonkPairReady && "STONK pair unavailable", !stonkCreationReady && stonkCreationError, !treasuryRpcReachable && "Treasury RPC check incomplete"].filter(Boolean) },
       pumpfun: {
         launchReady: pumpLaunchReady, pairReady: pumpPairReady, schemaReady: pumpSchemaReady,
-        enabled: pumpEnabled, rewardAsset: "selected_quote", fundingMode: "creator_vault_beta", graduationSupported: false,
+        enabled: pumpEnabled, rewardAsset: "selected_quote", fundingMode: "verified_per_mint_fee_sharing", graduationSupported: false,
         blockers: [
           ...readiness.missing,
           !readiness.launchesEnabled && "LAUNCHES_ENABLED is false",
           !databaseReachable && "Database unavailable",
-          !pumpSchemaReady && "Apply 202609150001_pumpfun.sql in Supabase",
+          !pumpSchemaReady && "Apply 202609240001_pump_fee_sharing.sql in Supabase",
           !pumpEnabled && "PUMPFUN_ENABLED is false",
           !pumpPairReady && "Pump.fun mainnet creation unavailable",
           !treasuryRpcReachable && "Treasury RPC check incomplete",

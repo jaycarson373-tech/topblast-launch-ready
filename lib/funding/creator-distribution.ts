@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { broadcastSignedCheckedTransfer, inspectSignedCheckedTransfer, prepareCheckedTransfer, verifyFinalizedSignedTransaction } from "@/lib/solana/checked-transfers";
 import { createRailwaySigner } from "@/lib/payout/railway-signer";
 import { solanaRpc } from "@/lib/solana/rpc";
+import { NATIVE_MINT } from "@solana/spl-token";
 
 export type CreatorDistributionResult = { status: "disabled" | "lease_busy" | "idle" | "awaiting_finality" | "submitted" | "confirmed"; id?: string; signature?: string | null };
 
@@ -52,10 +53,13 @@ export async function processCreatorFeeDistribution(db: SupabaseClient, owner: s
   const row = next.data;
   if (BigInt(row.amount_atoms) > BigInt(limitText)) throw new Error(`Creator distribution ${row.id} exceeds TOPBLAST_MAX_PAYOUT_ATOMS`);
   if (row.status === "planned") {
+    const launch = await db.from("launches").select("venue").eq("id", row.launch_id).single();
+    if (launch.error) throw launch.error;
     const prepared = await prepareCheckedTransfer({
       payer: treasury, mint: row.asset_mint,
       transfers: [{ recipient: row.wallet, amountAtoms: BigInt(row.amount_atoms) }],
       memo: `TOPBLAST:CREATOR:${row.launch_id}:${row.fee_event_id}`,
+      wrapNative: launch.data.venue === "pumpfun" && row.asset_mint === NATIVE_MINT.toBase58(),
     });
     const updated = await db.from("creator_fee_distributions").update({
       status: "prepared", unsigned_transaction: prepared.unsignedTransaction, unsigned_message_hash: prepared.messageHash,
