@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { updateCreatorShare, creatorShareToAllocation } from "@/lib/launch-allocation";
+import { updateCreatorShare, creatorShareToAllocation, allocationToCreatorShare } from "@/lib/launch-allocation";
 import { splitFundedFees } from "@/lib/rewards/calculator";
 import { allocationSchema, launchDraftSchema } from "@/lib/validation";
 import { launchPageUsesTestMode } from "@/lib/launch-page-mode";
@@ -41,6 +41,7 @@ describe("fixed new-launch allocation", () => {
       }
     }
     expect(creatorShareToAllocation(updateCreatorShare("creatorPercent", 20))).toEqual({ topblastPercent: 72, creatorPercent: 18, protocolPercent: 10 });
+    expect(allocationToCreatorShare({ topblastPercent: 72, creatorPercent: 18 })).toEqual({ topblastPercent: 80, creatorPercent: 20 });
   });
   it("rejects invalid numbers and enforces the fixed share server-side for new launches only", () => {
     expect(() => updateCreatorShare("creatorPercent", NaN)).toThrow("valid percentage");

@@ -26,3 +26,10 @@ export function creatorShareToAllocation(share: typeof initialCreatorShare) {
     protocolPercent: FIXED_PROTOCOL_PERCENT,
   };
 }
+
+export function allocationToCreatorShare(allocation: { topblastPercent: number; creatorPercent: number }) {
+  const distributable = allocation.topblastPercent + allocation.creatorPercent;
+  if (!Number.isFinite(distributable) || distributable <= 0) return null;
+  const topblastPercent = Math.round(allocation.topblastPercent / distributable * 100);
+  return { topblastPercent, creatorPercent: 100 - topblastPercent };
+}
